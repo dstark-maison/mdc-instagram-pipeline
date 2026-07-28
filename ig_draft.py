@@ -213,6 +213,11 @@ def crop_image_to_square(image_url, output_path):
     """Download the article's featured image and center-crop to 1:1."""
     resp = requests.get(image_url)
     resp.raise_for_status()
+    print(  # TEMPORARY
+        "DEBUG crop_image_to_square download:", resp.status_code,
+        "Content-Type:", resp.headers.get("Content-Type"),
+        "bytes:", len(resp.content),
+    )
     img = Image.open(io.BytesIO(resp.content)).convert("RGB")
 
     w, h = img.size
@@ -298,37 +303,48 @@ def main():
         print("No new articles to draft.")
         return
 
+    failures = []
+
     for article in new_articles:
         print(f"Drafting Instagram post for: {article['title']}")
+        try:
+            article_url = build_article_url(
+                os.environ["SHOPIFY_STORE_DOMAIN"],
+                os.environ["SHOPIFY_BLOG_HANDLE"],
+                article["handle"],
+            )
 
-        article_url = build_article_url(
-            os.environ["SHOPIFY_STORE_DOMAIN"],
-            os.environ["SHOPIFY_BLOG_HANDLE"],
-            article["handle"],
-        )
+            content = generate_caption(article, model)
 
-        content = generate_caption(article, model)
+            image_repo_path = f"generated/ig-{article['handle']}.jpg"
+            crop_image_to_square(article["image"]["url"], Path(image_repo_path))
 
-        image_repo_path = f"generated/ig-{article['handle']}.jpg"
-        crop_image_to_square(article["image"]["url"], Path(image_repo_path))
+            # Must be pushed before create_media_container() below — Meta's
+            # servers fetch the raw.githubusercontent.com URL themselves, so
+            # it has to already be live, not committed later by a separate
+            # step.
+            git_commit_and_push(
+                [image_repo_path], f"Add IG image for {article['handle']} [skip ci]"
+            )
+            image_url = public_raw_url(image_repo_path)
 
-        # Must be pushed before create_media_container() below — Meta's
-        # servers fetch the raw.githubusercontent.com URL themselves, so it
-        # has to already be live, not committed later by a separate step.
-        git_commit_and_push(
-            [image_repo_path], f"Add IG image for {article['handle']} [skip ci]"
-        )
-        image_url = public_raw_url(image_repo_path)
+            creation_id = create_media_container(
+                os.environ["IG_USER_ID"], os.environ["ACCESS_TOKEN"],
+                image_url, content["caption"] + "\n\n" + " ".join(f"#{h}" for h in content["hashtags"]),
+            )
 
-        creation_id = create_media_container(
-            os.environ["IG_USER_ID"], os.environ["ACCESS_TOKEN"],
-            image_url, content["caption"] + "\n\n" + " ".join(f"#{h}" for h in content["hashtags"]),
-        )
-
-        send_approval_email(
-            article, article_url, content["caption"], content["hashtags"],
-            image_url, creation_id,
-        )
+            send_approval_email(
+                article, article_url, content["caption"], content["hashtags"],
+                image_url, creation_id,
+            )
+        except Exception as exc:
+            # One article's image/API hiccup shouldn't block every other
+            # article in this run. Only mark as drafted below on success, so
+            # a failed article is retried next run instead of silently
+            # skipped.
+            print(f"  FAILED to draft '{article['title']}': {exc}")
+            failures.append((article["title"], exc))
+            continue
 
         drafted_ids.add(article["id"])
         state["drafted_article_ids"] = list(drafted_ids)
@@ -338,6 +354,12 @@ def main():
         )
 
         print(f"  Container created ({creation_id}), approval email sent.")
+
+    if failures:
+        print(f"\n{len(failures)} article(s) failed to draft:")
+        for title, exc in failures:
+            print(f"  - {title}: {exc}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
