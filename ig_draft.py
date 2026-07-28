@@ -213,6 +213,7 @@ def create_media_container(ig_user_id, access_token, image_url, caption):
         f"{GRAPH_BASE}/{ig_user_id}/media",
         data={"image_url": image_url, "caption": caption, "access_token": access_token},
     )
+    print("DEBUG create_media_container response:", resp.status_code, resp.text)  # TEMPORARY
     resp.raise_for_status()
     return resp.json()["id"]
 
