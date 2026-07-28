@@ -98,15 +98,21 @@ def confirm_published(access_token, post_id):
 
 
 def find_existing_redirect(path):
-    """Look up whether a Shopify redirect already exists for this path."""
+    """Look up whether a Shopify redirect already exists for this path.
+
+    The query filter needs an explicit `path:` field prefix (confirmed
+    against Shopify's search-syntax docs) — a bare path string falls back to
+    an unreliable full-text search across multiple fields instead of
+    matching the path field specifically.
+    """
     query = """
-    query FindRedirect($path: String!) {
-      urlRedirects(first: 1, query: $path) {
+    query FindRedirect($query: String!) {
+      urlRedirects(first: 1, query: $query) {
         nodes { id path target }
       }
     }
     """
-    data = shopify_client.graphql(query, {"path": path})
+    data = shopify_client.graphql(query, {"query": f"path:{path}"})
     nodes = data["urlRedirects"]["nodes"]
     return nodes[0] if nodes else None
 

@@ -106,10 +106,23 @@ Admin API and the `mdc-blog-pipeline` repo, here's what changed:
 - **`SHOPIFY_STORE_DOMAIN` placeholder was wrong** — real value is
   `zpjzx0-gy.myshopify.com`, not `maison-de-cocon.myshopify.com`.
 - **Blog handle confirmed**: `blog` (there's only one blog on this store).
-- **Two real bugs in the GraphQL query**, both confirmed against the live
-  schema: `articles(..., sortKey: PUBLISHED_AT, ...)` — `sortKey` isn't a
-  valid argument on `Blog.articles` at all; and `excerpt` was requested on
-  `Article`, which doesn't exist (the real field is `summary`). Both fixed.
+- **Several real bugs in the GraphQL query, all confirmed against the live
+  schema/docs before fixing (not guessed):**
+  - `blogByHandle` doesn't exist on `QueryRoot` at all — only `blog(id:)` and
+    `blogs(query:, ...)`. First real run of `ig-draft.yml` failed on this
+    (`Field 'blogByHandle' doesn't exist on type 'QueryRoot'`) because this
+    field name was never actually re-verified when the sortKey/excerpt fixes
+    below were made — only the two now fixed. Now uses
+    `blogs(first: 1, query: "handle:<handle>")`.
+  - `articles(..., sortKey: PUBLISHED_AT, ...)` — `sortKey` isn't a valid
+    argument on `Blog.articles` at all.
+  - `excerpt` was requested on `Article`, which doesn't exist (the real
+    field is `summary`).
+  - `ig_publish.py`'s redirect lookup passed the raw path as the `query`
+    filter with no field prefix, which falls back to an unreliable
+    full-text search across multiple fields instead of matching `path`
+    specifically. Shopify's search syntax needs an explicit `path:` prefix
+    (e.g. `path:/pages/latest-post`) — fixed.
 - **Redirect write scope was wrong**: needs `write_online_store_navigation`,
   not `write_content` (see setup step 2 above).
 - **API version** (`2025-01`) was correct as originally guessed — matches

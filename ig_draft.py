@@ -86,34 +86,42 @@ def save_state(state):
 def fetch_recent_articles(blog_handle, limit=10):
     """Query Shopify Admin GraphQL for the most recent blog articles.
 
-    No sortKey argument: Blog.articles doesn't accept one (confirmed against
-    the live Admin API schema) — reverse:true on the default (ID) order is
-    the only sort control available, which matches publish order for a blog
-    that only ever publishes forward in time.
+    QueryRoot has no `blogByHandle` field (confirmed against the live
+    schema — only `blog(id:)` and `blogs(query:, ...)` exist), so the blog
+    is looked up via `blogs(query: "handle:...")` instead.
+
+    No sortKey argument on Blog.articles either (also confirmed live) —
+    reverse:true on the default (ID) order is the only sort control
+    available, which matches publish order for a blog that only ever
+    publishes forward in time.
     """
     query = """
-    query RecentArticles($blogHandle: String!, $first: Int!) {
-      blogByHandle(handle: $blogHandle) {
-        articles(first: $first, reverse: true) {
-          nodes {
-            id
-            title
-            handle
-            publishedAt
-            isPublished
-            summary
-            body
-            image { url }
+    query RecentArticles($blogHandleQuery: String!, $first: Int!) {
+      blogs(first: 1, query: $blogHandleQuery) {
+        nodes {
+          articles(first: $first, reverse: true) {
+            nodes {
+              id
+              title
+              handle
+              publishedAt
+              isPublished
+              summary
+              body
+              image { url }
+            }
           }
         }
       }
     }
     """
-    data = shopify_client.graphql(query, {"blogHandle": blog_handle, "first": limit})
-    blog = data.get("blogByHandle")
-    if not blog:
+    data = shopify_client.graphql(
+        query, {"blogHandleQuery": f"handle:{blog_handle}", "first": limit}
+    )
+    blogs = data["blogs"]["nodes"]
+    if not blogs:
         raise RuntimeError(f"Blog handle '{blog_handle}' not found or no access")
-    return blog["articles"]["nodes"]
+    return blogs[0]["articles"]["nodes"]
 
 
 def build_article_url(store_domain, blog_handle, article_handle):
