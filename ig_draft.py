@@ -213,12 +213,21 @@ def crop_image_to_square(image_url, output_path):
     """Download the article's featured image and center-crop to 1:1."""
     resp = requests.get(image_url)
     resp.raise_for_status()
-    print(  # TEMPORARY
-        "DEBUG crop_image_to_square download:", resp.status_code,
-        "Content-Type:", resp.headers.get("Content-Type"),
-        "bytes:", len(resp.content),
-    )
-    img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    content_type = resp.headers.get("Content-Type")
+    print(f"  Downloaded featured image: {content_type}, {len(resp.content)} bytes")
+    try:
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    except Exception as exc:
+        # Confirmed live: a Shopify article's featured image can be an SVG
+        # (Content-Type image/svg+xml) — Pillow can't rasterize that. Surface
+        # the actual content type instead of Pillow's generic error, since
+        # the real fix is replacing the image in Shopify, not code.
+        raise RuntimeError(
+            f"Could not open featured image as a raster image "
+            f"(Content-Type: {content_type}, {len(resp.content)} bytes). "
+            f"If this is an SVG or other vector/unsupported format, replace "
+            f"the article's featured image in Shopify with a photo."
+        ) from exc
 
     w, h = img.size
     side = min(w, h)
