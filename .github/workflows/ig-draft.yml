@@ -41,15 +41,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
           RESEND_TO: ${{ secrets.RESEND_TO }}
+        # GITHUB_REPOSITORY / GITHUB_REF_NAME are already in the runner's
+        # default environment — no need to wire them through explicitly.
+        # The script itself commits + pushes the generated image (and then
+        # the state file) mid-run, right after each is written — Meta's
+        # media-fetch step needs the image's raw.githubusercontent.com URL
+        # to already be live, so this can't be deferred to a later step.
         run: python ig_draft.py
-
-      - name: Commit generated image + updated state
-        if: always()
-        run: |
-          git config user.name "ig-instagram-pipeline-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add generated/ state/
-          git diff --staged --quiet || git commit -m "Draft Instagram post(s) [skip ci]"
-          git checkout -- .
-          git pull --rebase origin main
-          git push

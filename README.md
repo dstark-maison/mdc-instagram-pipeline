@@ -139,20 +139,46 @@ Admin API and the `mdc-blog-pipeline` repo, here's what changed:
   already handled by `state/ig-drafted-articles.json`, so it did nothing.
 - `CLAUDE_MODEL` default updated to `claude-sonnet-5` (current model —
   matches `mdc-blog-pipeline`'s production workflow).
-- The draft-commit workflow step now mirrors `mdc-blog-pipeline`'s more
-  robust commit pattern (`git checkout -- .` + `git pull --rebase` before
-  push, and runs `if: always()`) to avoid losing progress on a push conflict
-  or a mid-run failure.
+- `generate_caption()` assumed `content[0]` was always the text block.
+  `claude-sonnet-5` returns a leading `thinking` block by default (confirmed
+  live — first real run failed with `KeyError: 'text'`), so it now finds the
+  first block with `type == "text"` instead of assuming position 0.
+- **Image commit+push was happening too late.** The original design created
+  the Instagram media container using the image's `raw.githubusercontent.com`
+  URL immediately, but only committed + pushed that image in a later,
+  separate workflow step — so Meta's servers were asked to fetch a file that
+  didn't exist yet (confirmed live: `400 "The media could not be fetched
+  from this URI"`). `git_commit_and_push()` in `ig_draft.py` now commits +
+  pushes the image (and then the state file) mid-run, immediately after each
+  is written, before the next step needs it live. The workflow's old,
+  separate "commit generated image + state" step was removed since the
+  script now owns this entirely.
+
+## ⚠️ Open blocker: this repo is private, and that's incompatible with `raw.githubusercontent.com`
+
+Confirmed directly (anonymous `curl` to an already-committed, already-pushed
+image URL returns `404`): `raw.githubusercontent.com` does not serve files
+from a private repo to unauthenticated requests, and Meta's Graph API fetches
+image URLs anonymously. This is **not a timing issue** (that one's fixed
+above) — it will 404 forever, for every image, regardless of ordering, as
+long as this repo stays private. This blocks `ig-draft.yml` from working at
+all until resolved. Options, needing a decision:
+
+1. **Make this repo public.** Nothing in it is actually sensitive — no
+   secrets live in the repo (those are GitHub Actions secrets), and the
+   committed images are just featured images from already-public blog posts.
+   Smallest change, keeps the "no new infrastructure" approach intact.
+2. **Move image hosting elsewhere** (e.g. Shopify's own file storage, as
+   originally flagged as a future fallback) — bigger change, and the kind of
+   thing explicitly flagged as "discuss before replacing."
+
+Not decided yet — do not merge past this point without picking one.
 
 ## Open items (intentionally not solved here)
 
 - **Hashtag strategy**: currently just asks Claude to generate 8–15
   "relevant" hashtags with no dedicated research process — intentional for
   this pass.
-- **Image hosting**: cropped images are committed directly into this repo's
-  `generated/` folder and served via `raw.githubusercontent.com` — a
-  deliberate no-new-infrastructure choice. Don't replace with a different
-  image host without discussing it first.
 
 ## Not yet tested end-to-end
 

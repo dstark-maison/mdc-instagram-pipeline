@@ -5,15 +5,16 @@ Runs on a schedule (see ig-draft.yml). For each Shopify blog article
 published since the last run:
   1. Generate a caption + hashtags with Claude, using the blog post content
      and (optionally) a local brand-voice.md file for tone/style guidance.
-  2. Download the article's featured image and crop it to a 1:1 square.
-  3. Commit the cropped image to this repo (generated/) so it has a public
-     raw.githubusercontent.com URL — required by the Graph API, and avoids
-     needing any new image-hosting infrastructure.
-  4. Create an Instagram media container (NOT published yet).
-  5. Email an approval request via Resend, with the creation_id and blog
+  2. Download the article's featured image, crop it to a 1:1 square, and
+     commit + push it to this repo (generated/) immediately — before the
+     next step — so it has a live public raw.githubusercontent.com URL,
+     avoiding any new image-hosting infrastructure.
+  3. Create an Instagram media container (NOT published yet), pointing at
+     that now-public image URL.
+  4. Email an approval request via Resend, with the creation_id and blog
      post URL needed to run the publish workflow.
-  6. Record the article as "drafted" in state/ig-drafted-articles.json so
-     it's never drafted twice.
+  5. Record the article as "drafted" in state/ig-drafted-articles.json
+     (committed + pushed immediately too) so it's never drafted twice.
 
 This script does not publish anything. Publishing only happens via
 ig_publish.py, triggered manually through the ig-publish.yml workflow
@@ -42,6 +43,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,6 +83,27 @@ def load_state():
 def save_state(state):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2))
+
+
+def git_commit_and_push(paths, message):
+    """Commit + push specific paths immediately, from inside the script.
+
+    This has to happen here and not as a later, separate workflow step:
+    create_media_container() needs the image's raw.githubusercontent.com
+    URL to already be live and fetchable by Meta's servers at the moment
+    it's called — waiting until the whole script finishes to commit+push
+    means Meta is asked to fetch a file that doesn't exist yet (confirmed
+    live: this was the actual cause of a 400 "media could not be fetched"
+    error from the Graph API).
+    """
+    subprocess.run(["git", "config", "user.name", "ig-instagram-pipeline-bot"], check=True)
+    subprocess.run(["git", "config", "user.email", "actions@users.noreply.github.com"], check=True)
+    subprocess.run(["git", "add", *[str(p) for p in paths]], check=True)
+    if subprocess.run(["git", "diff", "--staged", "--quiet"]).returncode == 0:
+        return  # nothing to commit
+    subprocess.run(["git", "commit", "-m", message], check=True)
+    subprocess.run(["git", "pull", "--rebase", "origin", os.environ["GITHUB_REF_NAME"]], check=True)
+    subprocess.run(["git", "push"], check=True)
 
 
 def fetch_recent_articles(blog_handle, limit=10):
@@ -213,7 +236,6 @@ def create_media_container(ig_user_id, access_token, image_url, caption):
         f"{GRAPH_BASE}/{ig_user_id}/media",
         data={"image_url": image_url, "caption": caption, "access_token": access_token},
     )
-    print("DEBUG create_media_container response:", resp.status_code, resp.text)  # TEMPORARY
     resp.raise_for_status()
     return resp.json()["id"]
 
@@ -289,6 +311,13 @@ def main():
 
         image_repo_path = f"generated/ig-{article['handle']}.jpg"
         crop_image_to_square(article["image"]["url"], Path(image_repo_path))
+
+        # Must be pushed before create_media_container() below — Meta's
+        # servers fetch the raw.githubusercontent.com URL themselves, so it
+        # has to already be live, not committed later by a separate step.
+        git_commit_and_push(
+            [image_repo_path], f"Add IG image for {article['handle']} [skip ci]"
+        )
         image_url = public_raw_url(image_repo_path)
 
         creation_id = create_media_container(
@@ -302,10 +331,13 @@ def main():
         )
 
         drafted_ids.add(article["id"])
-        print(f"  Container created ({creation_id}), approval email sent.")
+        state["drafted_article_ids"] = list(drafted_ids)
+        save_state(state)
+        git_commit_and_push(
+            [STATE_PATH], f"Mark {article['handle']} as drafted [skip ci]"
+        )
 
-    state["drafted_article_ids"] = list(drafted_ids)
-    save_state(state)
+        print(f"  Container created ({creation_id}), approval email sent.")
 
 
 if __name__ == "__main__":
