@@ -1,0 +1,21 @@
+# Local plaintext secrets from manual setup — never commit. Actual values
+# live only in GitHub Actions repo secrets.
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Claude Code local tool settings — machine-specific, not part of the pipeline
+.claude/
+
+# Local screen recordings for Meta App Review — not part of the pipeline
+*.mp4
+
+# OS cruft
+.DS_Store
+Thumbs.db

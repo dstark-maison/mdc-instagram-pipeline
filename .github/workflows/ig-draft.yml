@@ -1,0 +1,55 @@
+# Runs the draft stage: checks for newly published blog posts, drafts an
+# Instagram companion post for each, and emails an approval request.
+# Never publishes anything by itself.
+
+name: IG Draft
+
+on:
+  schedule:
+    # Runs twice a day. Adjust to match your blog's actual publish cadence
+    # (currently 3x/week) — twice-daily just means new posts are caught
+    # promptly without needing to know the exact publish time.
+    - cron: "0 7,15 * * *"
+  workflow_dispatch: {}  # allows manual runs for testing
+
+permissions:
+  contents: write  # needed to commit the state file + generated image
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests Pillow --break-system-packages
+
+      - name: Run draft script
+        env:
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          SHOPIFY_BLOG_HANDLE: ${{ secrets.SHOPIFY_BLOG_HANDLE }}
+          STOREFRONT_DOMAIN: ${{ secrets.STOREFRONT_DOMAIN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
+          RESEND_TO: ${{ secrets.RESEND_TO }}
+        run: python ig_draft.py
+
+      - name: Commit generated image + updated state
+        if: always()
+        run: |
+          git config user.name "ig-instagram-pipeline-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add generated/ state/
+          git diff --staged --quiet || git commit -m "Draft Instagram post(s) [skip ci]"
+          git checkout -- .
+          git pull --rebase origin main
+          git push

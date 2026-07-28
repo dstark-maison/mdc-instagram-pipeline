@@ -1,0 +1,41 @@
+# Manually triggered ONLY — this is the human approval gate. Publishes the
+# specified Instagram media container and updates the bio-link redirect.
+# There is no schedule here on purpose: nothing publishes without someone
+# explicitly running this workflow with the values from the approval email.
+
+name: IG Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      creation_id:
+        description: "The creation_id from the approval email"
+        required: true
+        type: string
+      blog_post_url:
+        description: "The blog post URL from the approval email"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+
+      - name: Publish + update bio-link redirect
+        env:
+          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          BIO_LINK_PATH: ${{ secrets.BIO_LINK_PATH }}
+        run: python ig_publish.py "${{ inputs.creation_id }}" "${{ inputs.blog_post_url }}"
