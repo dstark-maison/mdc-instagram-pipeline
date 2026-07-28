@@ -174,7 +174,9 @@ without the # symbol (added later), mixing brand/niche/broad tags."""
         },
     )
     resp.raise_for_status()
-    text = resp.json()["content"][0]["text"].strip()
+    response_json = resp.json()
+    print("DEBUG generate_caption raw response:", json.dumps(response_json))  # TEMPORARY
+    text = response_json["content"][0]["text"].strip()
     text = re.sub(r"^```json\s*|\s*```$", "", text)
     return json.loads(text)
 
