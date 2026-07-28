@@ -174,9 +174,14 @@ without the # symbol (added later), mixing brand/niche/broad tags."""
         },
     )
     resp.raise_for_status()
-    response_json = resp.json()
-    print("DEBUG generate_caption raw response:", json.dumps(response_json))  # TEMPORARY
-    text = response_json["content"][0]["text"].strip()
+    content_blocks = resp.json()["content"]
+    # content[0] isn't reliably the text block — claude-sonnet-5 includes a
+    # leading "thinking" block by default (confirmed live), so find the
+    # first block actually of type "text" instead of assuming position 0.
+    text_blocks = [b["text"] for b in content_blocks if b.get("type") == "text"]
+    if not text_blocks:
+        raise RuntimeError(f"No text block in Claude response: {content_blocks}")
+    text = text_blocks[0].strip()
     text = re.sub(r"^```json\s*|\s*```$", "", text)
     return json.loads(text)
 
