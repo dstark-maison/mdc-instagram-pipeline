@@ -174,6 +174,11 @@ the bio link (captions cannot contain clickable links). End with a plain
 "Link in bio" call to action (in German, matching the brand's primary
 market) — do not include the URL itself in the caption.
 
+Never write health or allergy claims (hypoallergenic, allergikerfreundlich,
+antibakteriell …), certification claims (OEKO-TEX, GOTS, Down Pass …), or
+statements that we stock or sell a product that is not part of the post's
+content. Stay with what the post itself states.
+
 Respond ONLY with valid JSON, no markdown fences, no preamble:
 {{"caption": "...", "hashtags": ["...", "..."]}}
 
