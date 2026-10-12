@@ -16,7 +16,7 @@ loud when recording, per Meta's App Review guidance):
 
 Usage:
   pip install requests --break-system-packages
-  export IG_USER_ID=17841473943836366
+  export IG_USER_ID=your-instagram-business-account-id
   export ACCESS_TOKEN=<your token — see note below>
   python ig_publish_test.py
 

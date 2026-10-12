@@ -21,7 +21,7 @@ ig_publish.py, triggered manually through the ig-publish.yml workflow
 after a human reviews the Resend email.
 
 Required environment variables (set as GitHub Actions secrets):
-  SHOPIFY_STORE_DOMAIN     e.g. "zpjzx0-gy.myshopify.com" (the *.myshopify.com
+  SHOPIFY_STORE_DOMAIN     e.g. "your-store.myshopify.com" (the *.myshopify.com
                            backend domain, not the storefront domain)
   SHOPIFY_CLIENT_ID        Shopify custom app credentials (client_credentials
   SHOPIFY_CLIENT_SECRET    grant — see shopify_client.py)
@@ -30,7 +30,7 @@ Required environment variables (set as GitHub Actions secrets):
   ACCESS_TOKEN             Meta System User / Page-scoped access token
   IG_USER_ID               Instagram Business Account ID
   RESEND_API_KEY
-  RESEND_FROM              e.g. "MDC Instagram Pipeline <ig-pipeline@reports.maisondecocon.com>"
+  RESEND_FROM              e.g. "MDC Instagram Pipeline <you@example.com>"
   RESEND_TO                your notification email address
   GITHUB_REPOSITORY        auto-set by GitHub Actions (owner/repo)
   GITHUB_REF_NAME          auto-set by GitHub Actions (branch name)
