@@ -3,11 +3,11 @@ Shared Shopify Admin API access for the IG pipeline.
 
 client_credentials grant only — this store's app is a Dev Dashboard app,
 which does not expose a static Admin API token (mirrors the same pattern
-used in mdc-blog-pipeline/src/lib/shopify.js). The token is fetched fresh
+used in a sibling pipeline). The token is fetched fresh
 at the start of each process run and cached only for that run's lifetime.
 
 Required environment variables:
-  SHOPIFY_STORE_DOMAIN     e.g. "zpjzx0-gy.myshopify.com"
+  SHOPIFY_STORE_DOMAIN     e.g. "your-store.myshopify.com"
   SHOPIFY_CLIENT_ID
   SHOPIFY_CLIENT_SECRET
 """
