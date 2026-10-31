@@ -8,9 +8,9 @@ Phase 1 covers Instagram. Facebook, Pinterest and Reddit follow the same three s
 1. **Draft** (`social-draft.yml`, twice daily, `draft.py`): for each published article
    without a ledger entry, Claude writes the copy, the featured image is cropped to 1:1 and
    committed under `generated/` (public raw URL), the draft is saved to
-   `state/drafts/{handle}/ig.json`, and one email goes out. **Nothing is created on Instagram.**
+   `state/drafts/{article_id}/ig.json`, and one email goes out. **Nothing is created on Instagram.**
 2. **Approve**: the email has *Approve* / *Reject* buttons. Each opens a prefilled GitHub issue
-   (label `approval`, title `approve:{handle}:ig`). Click **Submit new issue**.
+   (label `approval`, title `approve:{article_id}:ig`). Click **Submit new issue**.
 3. **Publish** (`social-publish.yml`, `publish.py`): creates the IG container, publishes, reads
    the post back by id (permalink + caption must match), writes `state/ledger.json`, repoints the
    bio redirect and reads that back too. The result is commented on the issue and the issue is closed.
@@ -21,12 +21,12 @@ without its read-back.
 
 ## Ledger (`state/ledger.json`)
 
-`{handle: {channel: {status, post_id, url, timestamp, article_id}}}`
+`{article_id: {channel: {status, handle, post_id, url, timestamp}}}` — the key is the **numeric Shopify article id** (handles get renamed; ids do not). The handle is stored for display only.
 
 | status | meaning |
 |---|---|
 | `draft` | copy saved, nothing on the platform |
-| `publishing` | publish was called but not verified; **blocks automatic retries** (could double-post). Check Instagram, then fix the entry by hand |
+| `publishing` | publish was called but not verified; **blocks automatic retries** (could double-post). The failure email contains the exact entry to paste for both outcomes (post live / not live) |
 | `published` | posted and read back; re-running is a no-op |
 | `rejected` | rejected at the approval step |
 
@@ -37,13 +37,12 @@ without its read-back.
 - Only issues with the `approval` label from an `OWNER` or `COLLABORATOR` author run anything.
   Add the account you are signed in as (e.g. `drostark`) as a collaborator.
 - The title is passed via `env:` and must fully match
-  `^(approve|reject):[a-z0-9-]+:(ig|fb|ig\+fb|pin|reddit)$` (`core/approval.py: ACTION_RE`).
+  `^(approve|reject):[0-9]+:(ig|fb|ig\+fb|pin|reddit)$` (`core/approval.py: ACTION_RE`).
   Anything else fails. It is never interpolated into a shell line.
-- Article handles with characters outside `a-z0-9-` fail at draft time (failure email).
 
 ## Manual run / failure test
 
-*Actions → Social Publish → Run workflow*: `article`, `channel`. Tick **test_bad_token** to run with an
+*Actions → Social Publish → Run workflow*: `article` (numeric id), `channel`. Tick **test_bad_token** to run with an
 invalid Meta token and confirm the failure email arrives (the ledger stays `draft`).
 
 ## Layout

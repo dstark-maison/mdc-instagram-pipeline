@@ -15,11 +15,12 @@ from core import http
 
 # The ONLY accepted shape of an approval title. fullmatch(), never match():
 # `$` would accept a trailing newline.
-ACTION_RE = re.compile(r"(approve|reject):[a-z0-9-]+:(ig|fb|ig\+fb|pin|reddit)")
+ACTION_RE = re.compile(r"(approve|reject):[0-9]+:(ig|fb|ig\+fb|pin|reddit)")
 
 
-def approval_link(action, handle, channels):
-    title = f"{action}:{handle}:{channels}"
+def approval_link(action, article_id, channels):
+    """article_id is the NUMERIC Shopify id (handles get renamed; ids do not)."""
+    title = f"{action}:{article_id}:{channels}"
     if not ACTION_RE.fullmatch(title):
         raise ValueError(f"Approval title would be rejected by the workflow: {title!r}")
     query = urlencode(
@@ -70,7 +71,7 @@ def send_draft_email(article, previews, buttons):
         for p in previews
     )
     btns = "".join(
-        _button(label, approval_link(action, article["handle"], channels),
+        _button(label, approval_link(action, article["article_id"], channels),
                 "#2e6b3a" if action == "approve" else "#8a2f2f")
         for label, action, channels in buttons
     )

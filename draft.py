@@ -4,7 +4,7 @@ Maison de Cocon — social draft stage (Instagram for now).
 For each published blog article that has no ledger entry yet:
   1. generate the Instagram copy with Claude
   2. crop the featured image to 1:1 and push it (public raw URL, no hosting)
-  3. save the draft to state/drafts/{handle}/ig.json
+  3. save the draft to state/drafts/{article_id}/ig.json (numeric Shopify id)
   4. send ONE approval email (Approve / Reject)
   5. record status `draft` in state/ledger.json
 
@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 from core import approval, blog, config, copy, image, ledger
-from core.approval import ACTION_RE
 from channels import instagram
 
 REQUIRED_ENV = [
@@ -31,29 +30,25 @@ def select_new_articles(articles, ledger_data, legacy_ids):
     return [
         a for a in articles
         if a["isPublished"]
-        and a["id"] not in legacy_ids
-        and instagram.CODE not in ledger_data.get(a["handle"], {})
+        and ledger.numeric_id(a["id"]) not in legacy_ids
+        and instagram.CODE not in ledger_data.get(ledger.numeric_id(a["id"]), {})
     ]
 
 
 def draft_instagram(article, model):
     blog_handle = os.environ["SHOPIFY_BLOG_HANDLE"]
-    handle = article["handle"]
-    if not ACTION_RE.fullmatch(f"approve:{handle}:ig"):
-        raise ValueError(
-            f"Article handle {handle!r} cannot be used in an approval link "
-            f"(only a-z, 0-9 and '-' are allowed)."
-        )
+    handle = article["handle"]  # display + link only; the key is the numeric id
+    article_id = ledger.numeric_id(article["id"])
     if not (article.get("image") or {}).get("url"):
         raise RuntimeError("Article has no featured image")
 
     article_url = blog.build_article_url(blog_handle, handle)
     content = copy.generate_instagram_caption(article, model)
 
-    image_repo_path = f"generated/ig-{handle}.jpg"
+    image_repo_path = f"generated/ig-{article_id}.jpg"
     image.crop_to_square(article["image"]["url"], Path(image_repo_path))
     # Pushed before the email so the preview URL is live.
-    ledger.commit_and_push([image_repo_path], f"Add IG image for {handle} [skip ci]")
+    ledger.commit_and_push([image_repo_path], f"Add IG image for {article_id} ({handle}) [skip ci]")
     image_url = config.public_raw_url(image_repo_path)
 
     return instagram.build_draft(article, article_url, content, image_repo_path, image_url)
@@ -73,9 +68,10 @@ def main():
     for article in new_articles:
         print(f"Drafting for: {article['title']}")
         try:
+            article_id = ledger.numeric_id(article["id"])
             draft = draft_instagram(article, model)
             approval.send_draft_email(
-                article,
+                {**article, "article_id": article_id},
                 previews=[{
                     "label": "Instagram", "image_url": draft["image_url"],
                     "text": draft["full_caption"], "target": draft["target"],
@@ -84,15 +80,15 @@ def main():
                 buttons=[("Approve", "approve", "ig"), ("Reject", "reject", "ig")],
             )
 
-            def mutate(data, article=article, draft=draft):
+            def mutate(data, article=article, article_id=article_id):
                 ledger.set_entry(
-                    data, article["handle"], instagram.CODE,
-                    status=ledger.DRAFT, article_id=article["id"],
+                    data, article_id, instagram.CODE,
+                    status=ledger.DRAFT, article_id=article_id, handle=article["handle"],
                     post_id=None, url=None, timestamp=ledger.now(),
                 )
 
-            path = ledger.write_draft(article["handle"], instagram.CODE, draft)
-            ledger.update(mutate, f"Draft {article['handle']} (ig) [skip ci]", [path])
+            path = ledger.write_draft(article_id, instagram.CODE, draft)
+            ledger.update(mutate, f"Draft {article_id} ({article['handle']}, ig) [skip ci]", [path])
             print("  Draft saved, approval email sent.")
         except Exception as exc:
             # One article must not block the rest. No ledger entry is written,

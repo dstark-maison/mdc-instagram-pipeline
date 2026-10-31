@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       article:
-        description: "Article handle (a-z, 0-9, -)"
+        description: "NUMERIC Shopify article id, e.g. 752115122509 (not the handle)"
         required: true
         type: string
       channel:

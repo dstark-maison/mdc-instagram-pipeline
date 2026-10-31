@@ -26,7 +26,8 @@ def full_caption(caption, hashtags):
 def build_draft(article, article_url, content, image_repo_path, image_url):
     return {
         "channel": CODE,
-        "article_id": article["id"],
+        "article_id": article["id"].rsplit("/", 1)[-1],
+        "gid": article["id"],
         "handle": article["handle"],
         "title": article["title"],
         "article_url": article_url,

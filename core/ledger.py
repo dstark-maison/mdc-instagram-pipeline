@@ -1,7 +1,7 @@
 """State: drafts, ledger, and the git plumbing that persists them.
 
-state/ledger.json:  {handle: {channel: {status, post_id, url, timestamp, ...}}}
-state/drafts/{handle}/{channel}.json:  copy + image + target + link
+state/ledger.json:  {article_id: {channel: {status, post_id, url, timestamp, ...}}}
+state/drafts/{article_id}/{channel}.json:  copy + image + target + link (handle = display only)
 
 Statuses:
   draft       copy saved, nothing on the platform
@@ -24,6 +24,12 @@ LEGACY_PATH = Path("state/legacy-ig-drafted-articles.json")
 DRAFT, PUBLISHING, PUBLISHED, REJECTED = "draft", "publishing", "published", "rejected"
 
 
+def numeric_id(gid):
+    """'gid://shopify/Article/752115122509' -> '752115122509'. Ledger, drafts and
+    approval titles are all keyed by this, never by the (renameable) handle."""
+    return str(gid).rsplit("/", 1)[-1]
+
+
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -37,12 +43,12 @@ def save(ledger):
     LEDGER_PATH.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
 
 
-def get(ledger, handle, channel):
-    return ledger.get(handle, {}).get(channel)
+def get(ledger, article_id, channel):
+    return ledger.get(article_id, {}).get(channel)
 
 
-def set_entry(ledger, handle, channel, **fields):
-    entry = ledger.setdefault(handle, {}).setdefault(channel, {})
+def set_entry(ledger, article_id, channel, **fields):
+    entry = ledger.setdefault(article_id, {}).setdefault(channel, {})
     entry.update(fields)
     return entry
 
@@ -50,26 +56,44 @@ def set_entry(ledger, handle, channel, **fields):
 def legacy_drafted_ids():
     """Article ids drafted by the pre-ledger Instagram pipeline."""
     if LEGACY_PATH.exists():
-        return set(json.loads(LEGACY_PATH.read_text()).get("drafted_article_ids", []))
+        return {numeric_id(i) for i in json.loads(LEGACY_PATH.read_text()).get("drafted_article_ids", [])}
     return set()
 
 
-def draft_path(handle, channel):
-    return DRAFTS_DIR / handle / f"{channel}.json"
+def draft_path(article_id, channel):
+    return DRAFTS_DIR / article_id / f"{channel}.json"
 
 
-def write_draft(handle, channel, draft):
-    path = draft_path(handle, channel)
+def write_draft(article_id, channel, draft):
+    path = draft_path(article_id, channel)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(draft, indent=2, ensure_ascii=False) + "\n")
     return path
 
 
-def read_draft(handle, channel):
-    path = draft_path(handle, channel)
+def read_draft(article_id, channel):
+    path = draft_path(article_id, channel)
     if not path.exists():
         raise FileNotFoundError(f"No draft at {path}")
     return json.loads(path.read_text())
+
+
+def stuck_entry_help(article_id, channel, entry):
+    """Exact, copy-pasteable instructions for a ledger entry stuck in `publishing`."""
+    keep = {k: entry[k] for k in ("article_id", "handle") if k in entry}
+    live = {**keep, "status": PUBLISHED, "post_id": "<media id from Instagram>",
+            "url": "<permalink of the post>", "timestamp": "<ISO time of the post>"}
+    not_live = {**keep, "status": DRAFT, "post_id": None, "url": None, "container_id": None,
+                "timestamp": now()}
+    dump = lambda o: json.dumps(o, indent=2, ensure_ascii=False)
+    return (
+        f'LEDGER ENTRY TO FIX BY HAND: state/ledger.json -> "{article_id}" -> "{channel}"\n\n'
+        f"Current entry (stuck, blocks automatic retries):\n{dump(entry)}\n\n"
+        f"1. Check the Instagram feed for this article.\n\n"
+        f"2a. Post IS live -> replace the entry with:\n{dump(live)}\n\n"
+        f"2b. Post is NOT live -> replace the entry with:\n{dump(not_live)}\n\n"
+        f"Commit the change, then (2b only) re-run Social Publish: article={article_id}, channel={channel}."
+    )
 
 
 # --- git persistence -------------------------------------------------------
