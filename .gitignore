@@ -19,3 +19,5 @@ venv/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+reddit/inbox/
