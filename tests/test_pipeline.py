@@ -112,15 +112,17 @@ class DraftSelection(InTmp):
 
     def test_explicit_request_ignores_age_but_not_hold_or_published(self):
         old = {"isPublished": True}
-        draft.check_explicit("5", old, {}, hold={})  # old article is fine on request
+        self.assertEqual(draft.check_explicit("5", old, {}, hold={}), ["ig", "fb"])  # old article is fine on request
         with self.assertRaises(RuntimeError):
             draft.check_explicit("5", old, {}, hold={"5": "claims"})
         with self.assertRaises(RuntimeError):
             draft.check_explicit("5", {"isPublished": False}, {}, hold={})
-        for status in ("published", "publishing"):
-            with self.assertRaises(RuntimeError):
-                draft.check_explicit("5", old, {"5": {"ig": {"status": status}}}, hold={})
-        draft.check_explicit("5", old, {"5": {"ig": {"status": "draft"}}}, hold={})  # re-draft ok
+        both = {"5": {"ig": {"status": "published"}, "fb": {"status": "publishing"}}}
+        with self.assertRaises(RuntimeError):  # nothing left to draft on any channel
+            draft.check_explicit("5", old, both, hold={})
+        only_ig = {"5": {"ig": {"status": "published"}}}  # e.g. a legacy IG post: FB can still be drafted
+        self.assertEqual(draft.check_explicit("5", old, only_ig, hold={}), ["fb"])
+        self.assertEqual(draft.check_explicit("5", old, {"5": {"ig": {"status": "draft"}}}, hold={}), ["ig", "fb"])
 
     def test_non_numeric_article_id_is_refused(self):
         env = {"ARTICLE_ID": "upholstered-headboard-guide", **{k: "x" * 10 for k in draft.REQUIRED_ENV}}

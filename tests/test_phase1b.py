@@ -29,12 +29,20 @@ def make_draft(article_id, caption):
             "image_path": f"generated/ig-{article_id}.jpg", "target": "IG"}
 
 
+def make_drafts(article_id, caption):
+    """What draft.build_drafts returns: one draft per channel."""
+    d = make_draft(article_id, caption)
+    fb = {**d, "channel": "fb", "message": caption + " Zum Artikel: https://shop/x", "target": "FB"}
+    fb.pop("full_caption")
+    return {"ig": d, "fb": fb}
+
+
 class DraftFlow(tp.InTmp):
     """Pending drafts stay approvable; re-drafts replace content under the same link."""
 
     def run_process(self, article_id, caption):
         sent = []
-        with mock.patch.object(draft, "draft_instagram", return_value=make_draft(article_id, caption)), \
+        with mock.patch.object(draft, "build_drafts", return_value=make_drafts(article_id, caption)), \
                 mock.patch.object(approval, "_send", side_effect=lambda subj, body: sent.append(body)):
             draft.process(ARTICLES[article_id], "m")
         return sent[-1]
@@ -44,11 +52,11 @@ class DraftFlow(tp.InTmp):
         entry = ledger.load()[A]["ig"]
         self.assertEqual((entry["status"], entry["article_id"], entry["handle"]), ("draft", A, "older"))
         self.assertEqual(ledger.read_draft(A, "ig")["full_caption"], "cap A")
-        self.assertIn(f"title=approve%3A{A}%3Aig", body)
+        self.assertIn(f"title=approve%3A{A}%3Aig%2Bfb", body)
         self.assertNotIn("Pending approvals", body)  # nothing else pending
 
     def test_email_is_never_sent_if_persisting_fails(self):
-        with mock.patch.object(draft, "draft_instagram", return_value=make_draft(A, "x")), \
+        with mock.patch.object(draft, "build_drafts", return_value=make_drafts(A, "x")), \
                 mock.patch.object(ledger, "update", side_effect=RuntimeError("push failed")), \
                 mock.patch.object(approval, "_send") as send:
             with self.assertRaises(RuntimeError):
@@ -75,7 +83,7 @@ class DraftFlow(tp.InTmp):
         body = self.run_process(B, "cap B")
         self.assertIn("Pending approvals (1)", html.unescape(body))
         pend = [(aid, ch) for aid, ch, _ in ledger.pending_drafts(ledger.load(), exclude_article_id=B)]
-        self.assertEqual(pend, [(A, ["ig"])])
+        self.assertEqual(pend, [(A, ["ig", "fb"])])
 
     def test_redraft_replaces_content_and_the_same_link_publishes_the_latest(self):
         first = self.run_process(A, "caption v1")

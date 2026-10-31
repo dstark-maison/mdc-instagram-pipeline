@@ -42,7 +42,7 @@ jobs:
           SHOPIFY_BLOG_HANDLE: ${{ secrets.SHOPIFY_BLOG_HANDLE }}
           STOREFRONT_DOMAIN: ${{ secrets.STOREFRONT_DOMAIN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ACCESS_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}  # preflight only; drafting never calls Instagram
+          ACCESS_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}  # preflight only (all five scopes); drafting never posts anywhere
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
           RESEND_TO: ${{ secrets.RESEND_TO }}
