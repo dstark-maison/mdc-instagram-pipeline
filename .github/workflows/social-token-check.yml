@@ -1,0 +1,29 @@
+# READ-ONLY. Inspects the Meta system-user token (debug_token) and fails, with a
+# failure email naming the problem, if it is invalid or lacks a required scope.
+# Same check that runs at the start of every draft and publish run.
+
+name: Social Token Check
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: debug_token
+        env:
+          ACCESS_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
+          RESEND_TO: ${{ secrets.RESEND_TO }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python -m core.meta

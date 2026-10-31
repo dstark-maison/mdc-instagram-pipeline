@@ -58,8 +58,24 @@ def _button(label, url, color):
     )
 
 
-def send_draft_email(article, previews, buttons):
-    """previews: [{label, image_url, text, target}], buttons: [(label, action, channels)]."""
+def pending_section(pending):
+    """pending: [(article_id, channels "ig" / "ig+fb", title, handle)] -> HTML list with Approve links."""
+    if not pending:
+        return ""
+    e = html.escape
+    items = "".join(
+        f"<li>{e(title or handle or aid)} <span style='color:#666'>({e(handle or aid)})</span> "
+        f"{_button('Approve', approval_link('approve', aid, channels), '#2e6b3a')}</li>"
+        for aid, channels, title, handle in pending
+    )
+    return (f"<hr><h3>Pending approvals ({len(pending)})</h3>"
+            f"<p style='color:#666;font-size:12px'>Other drafts still waiting. They stay approvable; "
+            f"newer drafts never replace them.</p><ul>{items}</ul>")
+
+
+def send_draft_email(article, previews, buttons, pending=None):
+    """previews: [{label, image_url, text, target, link}], buttons: [(label, action, channels)],
+    pending: see pending_section()."""
     e = html.escape
     blocks = "".join(
         f"""
@@ -83,6 +99,7 @@ def send_draft_email(article, previews, buttons):
     <p style="color:#666;font-size:12px">A button opens a prefilled GitHub issue.
     Click "Submit new issue" to confirm (you must be signed in as a repo
     collaborator). Nothing publishes on its own.</p>
+    {pending_section(pending)}
     """
     _send(f"Review + Approve: {article['title']}", body)
 

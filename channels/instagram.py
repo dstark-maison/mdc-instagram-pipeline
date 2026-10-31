@@ -5,9 +5,10 @@ expire after 24 h, which broke approvals that arrived the next day.
 """
 
 import os
+import re
 import time
 
-from core import http, shopify_client
+from core import blog, http, ledger, shopify_client
 
 CODE = "ig"
 GRAPH_BASE = "https://graph.facebook.com/v25.0"
@@ -23,19 +24,21 @@ def full_caption(caption, hashtags):
     return caption + "\n\n" + " ".join(f"#{h}" for h in hashtags)
 
 
-def build_draft(article, article_url, content, image_repo_path, image_url):
+def build_draft(article, article_url, content, image_repo_path):
+    """image_url is deliberately NOT stored: it is built from the current repo name
+    when needed (a stored URL would break when the repo is renamed)."""
     return {
         "channel": CODE,
         "article_id": article["id"].rsplit("/", 1)[-1],
         "gid": article["id"],
         "handle": article["handle"],
         "title": article["title"],
+        "published_at": article.get("publishedAt"),
         "article_url": article_url,
         "caption": content["caption"],
         "hashtags": content["hashtags"],
         "full_caption": full_caption(content["caption"], content["hashtags"]),
         "image_path": image_repo_path,
-        "image_url": image_url,
         "target": "Instagram feed (@maisondecocon)",
     }
 
@@ -150,6 +153,42 @@ def update_bio_redirect(target_url):
     return check
 
 
+def _published_at_of_target(target_url):
+    """publishedAt of the article a bio redirect currently points to, or None."""
+    m = re.search(r"/blogs/[^/]+/([^/?#]+)", target_url or "")
+    if not m:
+        return None
+    data = shopify_client.graphql(
+        "query($q: String!) { articles(first: 1, query: $q) { nodes { publishedAt } } }",
+        {"q": f"handle:{m.group(1)}"},
+    )
+    nodes = data["articles"]["nodes"]
+    return nodes[0]["publishedAt"] if nodes else None
+
+
 def after_publish(draft, result):
+    """Move the bio redirect FORWARD only: update it iff this article was published
+    after the one it currently points to. Approving an older draft after a newer
+    post went out leaves the bio link alone."""
+    article = blog.fetch_article(draft["article_id"])
+    new_ts = blog.parse_ts(article["publishedAt"])
+
+    bio = ledger.load().get(ledger.BIO_KEY)
+    if bio:
+        current_ts, current_desc = bio["published_at"], f"article {bio['article_id']}"
+    else:  # first run on this ledger: ask Shopify where the redirect points now
+        existing = _find_redirect(os.environ["BIO_LINK_PATH"])
+        current_ts = _published_at_of_target(existing["target"]) if existing else None
+        current_desc = existing["target"] if existing else None
+    if current_ts and new_ts <= blog.parse_ts(current_ts):
+        return (f"Bio redirect `{os.environ['BIO_LINK_PATH']}` left unchanged: it points to a newer "
+                f"article ({current_desc}, published {current_ts}).")
+
     redirect = update_bio_redirect(draft["article_url"])
+
+    def mutate(data):
+        data[ledger.BIO_KEY] = {"article_id": draft["article_id"], "published_at": article["publishedAt"],
+                                "url": draft["article_url"], "updated": ledger.now()}
+
+    ledger.update(mutate, f"Bio link -> {draft['article_id']} [skip ci]")
     return f"Bio redirect `{redirect['path']}` → {redirect['target']}"

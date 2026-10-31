@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from core import approval, config, http, ledger
+from core import approval, config, http, ledger, meta
 from core.approval import ACTION_RE
 from channels import instagram
 
@@ -84,6 +84,8 @@ def do_approve(article_id, channel):
         raise Blocked("This draft was rejected; it will not be published.")
 
     draft = ledger.read_draft(article_id, channel)
+    # Never use a stored URL: build it from the CURRENT repo name (renames break old ones).
+    draft["image_url"] = config.public_raw_url(draft["image_path"])
 
     def mark_publishing(container_id):
         def mutate(d):
@@ -146,6 +148,13 @@ def main():
 
     if any(ch in CHANNELS for ch in channels):
         config.require_env(IG_ENV)
+        try:
+            meta.preflight()
+        except meta.TokenError as exc:
+            text = http.redact(exc)
+            approval.send_failure_email(f"Meta token check failed: {name}", text)
+            write_result(f"❌ **Not published.** {text}")
+            sys.exit(1)
     for ch in channels:
         try:
             line, ok = do_approve(article_id, ch)

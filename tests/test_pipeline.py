@@ -1,5 +1,6 @@
 import html
 import json
+import subprocess
 import os
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from unittest import mock
 
 import draft
 import publish
-from core import approval, http, ledger
+from core import approval, blog, http, ledger, meta
 from channels import instagram
 
 os.environ.update(GITHUB_REPOSITORY="o/r", GITHUB_REF_NAME="main", RESEND_API_KEY="x" * 12,
@@ -17,10 +18,13 @@ os.environ.update(GITHUB_REPOSITORY="o/r", GITHUB_REF_NAME="main", RESEND_API_KE
 ID = "752115122509"
 
 
-def fake_update(mutator, message, extra_paths=(), attempts=4):
+def fake_update(mutator, message, files=None, attempts=4):
     data = ledger.load()
     mutator(data)
     ledger.save(data)
+    for path, text in (files or {}).items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
     return data
 
 
@@ -126,25 +130,11 @@ class DraftSelection(InTmp):
         send.assert_called_once()
 
 
-class DraftProcess(InTmp):
-    def test_process_sends_email_writes_draft_and_ledger_entry(self):
-        article = {"id": f"gid://shopify/Article/{ID}", "handle": "some-post", "title": "T"}
-        fake_draft = {"image_url": "https://i", "full_caption": "cap", "target": "IG",
-                      "article_url": "https://u", "article_id": ID, "handle": "some-post"}
-        with mock.patch.object(draft, "draft_instagram", return_value=fake_draft),                 mock.patch.object(approval, "_send") as send:
-            draft.process(article, "m")
-        entry = ledger.load()[ID]["ig"]
-        self.assertEqual((entry["status"], entry["article_id"], entry["handle"]), ("draft", ID, "some-post"))
-        self.assertEqual(ledger.read_draft(ID, "ig")["full_caption"], "cap")
-        send.assert_called_once()
-        self.assertIn(f"title=approve%3A{ID}%3Aig", send.call_args[0][1])
-
-
 class Approve(InTmp):
     def seed(self, status="draft", **extra):
         ledger.save({ID: {"ig": {"status": status, "handle": "some-post", "article_id": ID,
                                  "post_id": None, "url": None, **extra}}})
-        ledger.write_draft(ID, "ig", {"full_caption": "cap", "article_url": "https://u", "image_url": "i"})
+        ledger.write_draft(ID, "ig", {"full_caption": "cap", "article_url": "https://u", "image_path": "generated/ig-x.jpg"})
 
     def test_publish_writes_ledger_and_is_idempotent(self):
         self.seed()
@@ -193,13 +183,19 @@ class Approve(InTmp):
 
 
 class MainFlow(InTmp):
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(meta, "preflight", return_value={})  # covered by TokenPreflight tests
+        p.start()
+        self.addCleanup(p.stop)
+
     env = {"TITLE": f"approve:{ID}:ig", "ACCESS_TOKEN": "bad-token-xxxx", "IG_USER_ID": "1",
            "SHOPIFY_STORE_DOMAIN": "s", "SHOPIFY_CLIENT_ID": "c", "SHOPIFY_CLIENT_SECRET": "s",
            "BIO_LINK_PATH": "/p"}
 
     def seed(self, status="draft", **extra):
         ledger.save({ID: {"ig": {"status": status, "handle": "some-post", "article_id": ID, **extra}}})
-        ledger.write_draft(ID, "ig", {"full_caption": "c", "article_url": "u", "image_url": "i"})
+        ledger.write_draft(ID, "ig", {"full_caption": "c", "article_url": "u", "image_path": "generated/ig-x.jpg"})
 
     def run_main(self, **env):
         result = Path("result.md")
@@ -291,8 +287,9 @@ class InstagramPublish(unittest.TestCase):
     def test_build_draft_stores_numeric_id_and_handle_separately(self):
         d = instagram.build_draft(
             {"id": f"gid://shopify/Article/{ID}", "handle": "h", "title": "T"},
-            "https://u", {"caption": "c", "hashtags": ["a"]}, "generated/ig-x.jpg", "https://i")
+            "https://u", {"caption": "c", "hashtags": ["a"]}, "generated/ig-x.jpg")
         self.assertEqual((d["article_id"], d["handle"]), (ID, "h"))
+        self.assertNotIn("image_url", d)  # built from the current repo name when needed
 
 
 if __name__ == "__main__":

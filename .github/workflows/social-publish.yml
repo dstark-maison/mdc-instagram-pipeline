@@ -62,7 +62,7 @@ jobs:
         env:
           TITLE: ${{ github.event.issue.title || format('approve:{0}:{1}', inputs.article, inputs.channel) }}
           RESULT_FILE: ${{ runner.temp }}/result.md
-          ACCESS_TOKEN: ${{ inputs.test_bad_token && 'invalid-token-for-failure-test' || secrets.META_ACCESS_TOKEN }}
+          ACCESS_TOKEN: ${{ inputs.test_bad_token && 'invalid-token-for-failure-test' || secrets.META_SYSTEM_USER_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           BIO_LINK_PATH: ${{ secrets.BIO_LINK_PATH }}
           SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}

@@ -1,4 +1,4 @@
-# MDC social pipeline
+# MDC social pipeline (`dstark-maison/mdc-social-pipeline`, formerly `mdc-instagram-pipeline`)
 
 Blog post → social copy → **one Resend approval email** → publish → verified in a ledger.
 Phase 1 covers Instagram. Facebook, Pinterest and Reddit follow the same three steps.
@@ -29,6 +29,25 @@ without its read-back.
 | `publishing` | publish was called but not verified; **blocks automatic retries** (could double-post). The failure email contains the exact entry to paste for both outcomes (post live / not live) |
 | `published` | posted and read back; re-running is a no-op |
 | `rejected` | rejected at the approval step |
+
+## Drafts stay approvable indefinitely
+
+- A draft is keyed by numeric article id. A newer cron/manual run never overwrites, expires or rejects the
+  draft of a *different* article, and the Instagram container is created only at publish time (no 24 h expiry).
+- Re-drafting the *same* article replaces its draft content; the existing approval link (same id) publishes the latest version.
+- `/pages/latest-post` only moves forward: it is updated only if the approved article was published after the one it
+  currently points to (pointer kept in the ledger under `_bio_link`). Approving an older draft after a newer post is live
+  leaves the bio link alone.
+- Every draft email ends with **Pending approvals**: all other drafts still in `draft` status, each with its Approve link.
+- Image URLs are never stored; they are built from the current repo name when an email is sent or a post is published.
+
+## Meta token
+
+Secret `META_SYSTEM_USER_TOKEN` (system user, never expires). At the start of every draft and publish run
+`core/meta.py` calls `debug_token`; an invalid token or a missing scope stops the run and the failure email names it.
+Required now: `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`
+(`pages_manage_posts` is added with Phase 2). *Actions → Social Token Check* runs the same check by hand.
+Tokens are sent as `Authorization` headers and redacted from every log, email and issue comment.
 
 ## Which articles get drafted
 
@@ -70,7 +89,7 @@ tests/      python -m unittest discover -s tests -t .
 
 Secrets (repo → Settings → Secrets → Actions): `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`,
 `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_BLOG_HANDLE`, `STOREFRONT_DOMAIN`, `ANTHROPIC_API_KEY`,
-`META_ACCESS_TOKEN`, `IG_USER_ID`, `RESEND_API_KEY`, `RESEND_FROM_IG`, `RESEND_TO`, `BIO_LINK_PATH`.
+`META_SYSTEM_USER_TOKEN`, `IG_USER_ID`, `RESEND_API_KEY`, `RESEND_FROM_IG`, `RESEND_TO`, `BIO_LINK_PATH`.
 (Names unchanged from the old pipeline.) The Shopify app needs `read_content` and
 `write_online_store_navigation`. Instagram bio link: set once, by hand, to `https://www.maisondecocon.com{BIO_LINK_PATH}`.
 Optional `brand-voice.md` in the repo root is added to the copy prompt.
