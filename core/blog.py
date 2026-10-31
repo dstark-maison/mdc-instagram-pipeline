@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime
+from urllib.parse import quote
 
 from core import shopify_client
 
@@ -51,7 +52,7 @@ def build_article_url(blog_handle, article_handle, utm=None):
     storefront = os.environ.get("STOREFRONT_DOMAIN", "www.maisondecocon.com")
     url = f"https://{storefront}/blogs/{blog_handle}/{article_handle}"
     if utm:
-        url += "?" + "&".join(f"{k}={v}" for k, v in utm.items())
+        url += "?" + "&".join(f"{quote(str(k))}={quote(str(v))}" for k, v in utm.items())
     return url
 
 

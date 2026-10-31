@@ -46,8 +46,8 @@ premium — never hype-y, never emoji-stuffed. Tagline: "Sleep, reconsidered."
 
 {('Brand voice guide:' + brand_voice) if brand_voice else ''}
 
-You will be given a blog post's title and content. Write a companion
-Instagram caption that teases the post and drives readers to read more via
+You will be given a blog post's title and content. Write the caption in
+German. Write a companion Instagram caption that teases the post and drives readers to read more via
 the bio link (captions cannot contain clickable links). End with a plain
 "Link in bio" call to action (in German, matching the brand's primary
 market) — do not include the URL itself in the caption.
@@ -68,3 +68,23 @@ without the # symbol (added later), mixing brand/niche/broad tags."""
         f"{article.get('summary') or article.get('body', '')[:3000]}"
     )
     return json.loads(_call_claude(system_prompt, user_prompt, model))
+
+
+# --- Facebook ---------------------------------------------------------------
+# The Facebook message is derived from the Instagram caption (same German core,
+# no second model call, nothing new to hallucinate): the "Link in bio" call to
+# action is replaced by the clickable article link, with fewer hashtags.
+_LINK_IN_BIO_RE = re.compile(r"[^.!?\n]*\blink\s+in\s+(?:der\s+)?bio\b[^.!?\n]*[.!?]?", re.I)
+FACEBOOK_LINK_LINE = "Zum Artikel:"
+FACEBOOK_MAX_HASHTAGS = 4
+
+
+def facebook_message(caption, hashtags, article_url_with_utm, max_hashtags=FACEBOOK_MAX_HASHTAGS):
+    body = _LINK_IN_BIO_RE.sub("", caption)
+    body = re.sub(r"[ \t]+\n", "\n", body)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    parts = [body, f"{FACEBOOK_LINK_LINE} {article_url_with_utm}"]
+    tags = " ".join(f"#{h}" for h in hashtags[:max_hashtags])
+    if tags:
+        parts.append(tags)
+    return "\n\n".join(p for p in parts if p)

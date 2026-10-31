@@ -20,13 +20,15 @@ from pathlib import Path
 
 from core import approval, config, http, ledger, meta
 from core.approval import ACTION_RE
-from channels import instagram
+from channels import facebook, instagram
 
-CHANNELS = {instagram.CODE: instagram}
+CHANNELS = {instagram.CODE: instagram, facebook.CODE: facebook}
 
 REQUIRED_ENV = ["GITHUB_REPOSITORY", "GITHUB_REF_NAME", "RESEND_API_KEY", "RESEND_FROM", "RESEND_TO"]
 IG_ENV = ["ACCESS_TOKEN", "IG_USER_ID", "SHOPIFY_STORE_DOMAIN",
           "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "BIO_LINK_PATH"]
+FB_ENV = ["ACCESS_TOKEN", "IG_USER_ID"]  # IG_USER_ID only identifies the linked Page
+ENV_BY_CHANNEL = {instagram.CODE: IG_ENV, facebook.CODE: FB_ENV}
 
 
 def parse_title(title):
@@ -146,10 +148,12 @@ def main():
         write_result(f"**Reject `{name}`**\n\n" + "\n".join(lines))
         return
 
-    if any(ch in CHANNELS for ch in channels):
-        config.require_env(IG_ENV)
+    known = [ch for ch in channels if ch in CHANNELS]
+    if known:
+        config.require_env(sorted({v for ch in known for v in ENV_BY_CHANNEL[ch]}))
         try:
-            meta.preflight()
+            # pages_manage_posts is required only when Facebook is part of this run
+            meta.preflight(meta.scopes_for(known))
         except meta.TokenError as exc:
             text = http.redact(exc)
             approval.send_failure_email(f"Meta token check failed: {name}", text)
@@ -167,6 +171,10 @@ def main():
             entry = ledger.get(ledger.load(), article_id, ch)
             if entry and entry.get("status") == ledger.PUBLISHING and "LEDGER ENTRY TO FIX" not in text:
                 text += "\n\n" + ledger.stuck_entry_help(article_id, ch, entry)
+            elif entry and entry.get("status") == ledger.DRAFT and len(channels) > 1:
+                text += (f"\n\nOnly this channel failed and it is still a draft. Retry just it: Actions -> "
+                         f"Social Publish -> article={article_id}, channel={ch} "
+                         f"(or the '{ch.upper()} only' button of the draft email).")
             line = f"- `{ch}`: **FAILED** — {text}"
             try:
                 approval.send_failure_email(f"Publish failed ({ch}): {name}", text)

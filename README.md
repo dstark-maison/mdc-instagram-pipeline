@@ -1,19 +1,21 @@
 # MDC social pipeline (`dstark-maison/mdc-social-pipeline`, formerly `mdc-instagram-pipeline`)
 
 Blog post → social copy → **one Resend approval email** → publish → verified in a ledger.
-Phase 1 covers Instagram. Facebook, Pinterest and Reddit follow the same three steps.
+Instagram and Facebook (German copy for both) ship together from one approval; Pinterest and Reddit follow the same three steps.
 
 ## Flow
 
 1. **Draft** (`social-draft.yml`, twice daily, `draft.py`): for each published article
    without a ledger entry, Claude writes the copy, the featured image is cropped to 1:1 and
-   committed under `generated/` (public raw URL), the draft is saved to
-   `state/drafts/{article_id}/ig.json`, and one email goes out. **Nothing is created on Instagram.**
-2. **Approve**: the email has *Approve* / *Reject* buttons. Each opens a prefilled GitHub issue
-   (label `approval`, title `approve:{article_id}:ig`). Click **Submit new issue**.
-3. **Publish** (`social-publish.yml`, `publish.py`): creates the IG container, publishes, reads
-   the post back by id (permalink + caption must match), writes `state/ledger.json`, repoints the
-   bio redirect and reads that back too. The result is commented on the issue and the issue is closed.
+   committed under `generated/` (public raw URL), the drafts are saved to
+   `state/drafts/{article_id}/ig.json` and `fb.json`, and one email goes out. **Nothing is created on Instagram or Facebook.**
+2. **Approve**: the email shows the Instagram and the Facebook preview and has the buttons
+   **Approve both** / **IG only** / **FB only** / **Reject** (titles `approve:{id}:ig+fb`, `:ig`, `:fb`, `reject:{id}:ig+fb`).
+   Each channel has its own draft file and ledger entry, so "IG only" leaves FB as `draft` and it can be approved later.
+   Each button opens a prefilled GitHub issue (label `approval`). Click **Submit new issue**.
+3. **Publish** (`social-publish.yml`, `publish.py`): per approved channel, in order IG then FB: posts it, reads the
+   post back by id (permalink/link + caption must match) and writes `state/ledger.json`. Instagram also repoints
+   the bio redirect and reads that back too. The result is commented on the issue and the issue is closed.
    *Reject* marks the draft `rejected` and publishes nothing.
 
 Any error → failure email with the platform's raw error text. A step is never marked done
@@ -29,6 +31,17 @@ without its read-back.
 | `publishing` | publish was called but not verified; **blocks automatic retries** (could double-post). The failure email contains the exact entry to paste for both outcomes (post live / not live) |
 | `published` | posted and read back; re-running is a no-op |
 | `rejected` | rejected at the approval step |
+
+## Facebook
+
+- `channels/facebook.py`: `POST /{page-id}/photos` with the image URL and `message`, then reads the photo back by id
+  (link present, caption equal to the draft) before the ledger says `published`.
+- The **Page token** is fetched at runtime (`core/meta.py: page_credentials`, from `META_SYSTEM_USER_TOKEN`: the Page linked
+  to `IG_USER_ID`), cached for the process only, redacted everywhere, never stored or logged.
+- Copy: the Instagram caption (German) with the "Link in bio" call to action replaced by `Zum Artikel: <article url>?utm_source=facebook&utm_medium=social&utm_campaign={handle}`
+  and at most 4 hashtags (`core/copy.py: facebook_message`).
+- Partial failure: if IG publishes and FB fails, FB goes back to `draft` and only FB is retried (the failure email says how);
+  if FB's outcome is unknown it stays `publishing` and the email contains the exact ledger entry to fix.
 
 ## Drafts stay approvable indefinitely
 
@@ -46,8 +59,8 @@ without its read-back.
 
 Secret `META_SYSTEM_USER_TOKEN` (system user, never expires). At the start of every draft and publish run
 `core/meta.py` calls `debug_token`; an invalid token or a missing scope stops the run and the failure email names it.
-Required now: `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`
-(`pages_manage_posts` is added with Phase 2). *Actions → Social Token Check* runs the same check by hand.
+Required for Instagram: `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`.
+`pages_manage_posts` is required only for runs that include Facebook (every draft run, and any approval with `fb`). *Actions → Social Token Check* runs the same check by hand.
 Tokens are sent as `Authorization` headers and redacted from every log, email and issue comment.
 
 ## Which articles get drafted

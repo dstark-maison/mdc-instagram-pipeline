@@ -14,8 +14,17 @@ from core import http
 
 GRAPH = "https://graph.facebook.com/v25.0"
 
-# Phase 1. pages_manage_posts is added in Phase 2, not before.
+# Instagram runs. pages_manage_posts is required ONLY for runs that include Facebook.
 REQUIRED_SCOPES = ["instagram_basic", "instagram_content_publish", "pages_show_list", "pages_read_engagement"]
+FACEBOOK_SCOPES = ["pages_manage_posts"]
+
+
+def scopes_for(channels):
+    """Scopes a run needs, by the channels it touches ("ig", "fb")."""
+    scopes = list(REQUIRED_SCOPES)
+    if "fb" in channels:
+        scopes += FACEBOOK_SCOPES
+    return scopes
 
 
 class TokenError(RuntimeError):
@@ -48,12 +57,39 @@ def preflight(required=None):
     return data
 
 
+_page_cache = {}
+
+
+def page_credentials():
+    """(page_id, page_name, page_access_token) of the Facebook Page linked to IG_USER_ID.
+
+    The Page token is fetched at runtime from the system-user token, cached for
+    this process only, registered for redaction, and never stored or printed.
+    """
+    if "page" in _page_cache:
+        return _page_cache["page"]
+    token, ig_id = os.environ["ACCESS_TOKEN"], os.environ["IG_USER_ID"]
+    headers = {"Authorization": f"Bearer {token}"}
+    accounts = http.request("GET", f"{GRAPH}/me/accounts", "meta-me-accounts", headers=headers,
+                            params={"fields": "id"}).json().get("data", [])
+    for acc in accounts:
+        page = http.request(
+            "GET", f"{GRAPH}/{acc['id']}", "meta-page", headers=headers,
+            params={"fields": "id,name,access_token,instagram_business_account"}).json()
+        if (page.get("instagram_business_account") or {}).get("id") == ig_id and page.get("access_token"):
+            http.register_secret(page["access_token"])
+            _page_cache["page"] = (page["id"], page.get("name"), page["access_token"])
+            return _page_cache["page"]
+    raise TokenError("No Facebook Page with a Page token is linked to the Instagram account "
+                     f"(checked {len(accounts)} page(s) reachable by the token).")
+
+
 if __name__ == "__main__":
     # Manual check: Actions -> Social Token Check. Failure sends the failure email.
     from core import approval, config
     config.require_env(["ACCESS_TOKEN", "RESEND_API_KEY", "RESEND_FROM", "RESEND_TO", "GITHUB_REPOSITORY"])
     try:
-        preflight()
+        preflight(scopes_for(["ig", "fb"]))
     except TokenError as exc:
         print(http.redact(exc))
         approval.send_failure_email("Meta token check failed", str(exc))

@@ -21,6 +21,8 @@ LEDGER_PATH = Path("state/ledger.json")
 DRAFTS_DIR = Path("state/drafts")
 
 DRAFT, PUBLISHING, PUBLISHED, REJECTED = "draft", "publishing", "published", "rejected"
+PLATFORM_NAMES = {"ig": "the Instagram feed", "fb": "the Facebook Page"}
+CHANNEL_ORDER = ("ig", "fb")
 
 
 def numeric_id(gid):
@@ -82,7 +84,7 @@ def stuck_entry_help(article_id, channel, entry):
     return (
         f'LEDGER ENTRY TO FIX BY HAND: state/ledger.json -> "{article_id}" -> "{channel}"\n\n'
         f"Current entry (stuck, blocks automatic retries):\n{dump(entry)}\n\n"
-        f"1. Check the Instagram feed for this article.\n\n"
+        f"1. Check {PLATFORM_NAMES.get(channel, channel)} for this article.\n\n"
         f"2a. Post IS live -> replace the entry with:\n{dump(live)}\n\n"
         f"2b. Post is NOT live -> replace the entry with:\n{dump(not_live)}\n\n"
         f"Commit the change, then (2b only) re-run Social Publish: article={article_id}, channel={channel}."
@@ -161,7 +163,7 @@ def pending_drafts(ledger_data, exclude_article_id=None):
     for key, channels in ledger_data.items():
         if key.startswith("_") or key == exclude_article_id:
             continue
-        pending = [c for c, e in channels.items() if e.get("status") == DRAFT]
+        pending = [c for c in CHANNEL_ORDER if channels.get(c, {}).get("status") == DRAFT]
         if not pending:
             continue
         try:

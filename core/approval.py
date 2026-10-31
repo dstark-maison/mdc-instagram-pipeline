@@ -64,8 +64,9 @@ def pending_section(pending):
         return ""
     e = html.escape
     items = "".join(
-        f"<li>{e(title or handle or aid)} <span style='color:#666'>({e(handle or aid)})</span> "
-        f"{_button('Approve', approval_link('approve', aid, channels), '#2e6b3a')}</li>"
+        f"<li>{e(title or handle or aid)} <span style='color:#666'>({e(handle or aid)}, "
+        f"{e(channels.replace('+', ' + ').upper())})</span> "
+        f"{_button('Approve both' if channels == 'ig+fb' else 'Approve ' + channels.upper(), approval_link('approve', aid, channels), '#2e6b3a')}</li>"
         for aid, channels, title, handle in pending
     )
     return (f"<hr><h3>Pending approvals ({len(pending)})</h3>"
