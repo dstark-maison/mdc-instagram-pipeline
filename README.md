@@ -43,6 +43,35 @@ without its read-back.
 - Partial failure: if IG publishes and FB fails, FB goes back to `draft` and only FB is retried (the failure email says how);
   if FB's outcome is unknown it stays `publishing` and the email contains the exact ledger entry to fix.
 
+## Reddit (r/MaisonDeCocon): drafts, manual posting
+
+Reddit closed new API access (31 Oct 2026) and ends the public API in March 2027, so there is **no Reddit API**: the pipeline drafts and
+tracks, you post by hand.
+
+- **Weekly draft** (`social-reddit-draft.yml`, Monday 06:47 UTC + manual, `reddit_draft.py`): picks **5 questions** with distinct
+  articles from three inputs and sends **one review email per draft** (Approve / Reject), flags first:
+  1. **Search Console**, a live pull of the last 7 days (same window as `seo-weekly-report`: end = today-3), question-style queries
+     (DE/EN: wie, was, welche, warum, how, what, which, why, ...) with >= 3 impressions and CTR < 2% **or** position 5-20.
+     Needs the secret `GOOGLE_SERVICE_ACCOUNT_JSON`. If the pull fails you get a failure email and the run continues without it;
+     **old data is never used**.
+  2. **findquestions.com**: it has no API or export (it emails 40 ideas), so paste the week's list into the workflow input
+     `questions` (one per line, or separated by `|` or `?`). Questions not used are carried over (encrypted pool).
+  3. **Blog FAQ blocks** (the FAQPage JSON-LD of every article).
+  Slots: up to 3 from Search Console, up to 2 pasted, the rest from FAQ (shortfalls filled in that order). Held articles
+  (`HOLD_ARTICLE_IDS`) are never a link target or fact source. Questions already in the ledger (any status) are skipped.
+- **The post**: the full answer in the post itself, practical, no sales tone, brand affiliation stated plainly, at most ONE link to the
+  matching article (`utm_source=reddit&utm_medium=social&utm_campaign={handle}`; German pages for German questions). English by
+  default, German when the question is German. The model sees only the matched article as its fact source; the email lists
+  everything that cannot be traced to it (unknown numbers, claim wording, model-reported gaps, no matching article).
+- **Publish (manual)**: *Approve* -> a copy-ready email (title + body) with a suggested posting day (one post per day). You post it,
+  then *Actions -> Social Publish -> Run workflow* with `article` = the draft id, `channel` = `reddit`, `url` = the post URL.
+  The ledger then marks it `published` (recorded from your URL; it cannot be read back from Reddit).
+- **Privacy** (this repo is public): Search Console data, the pasted list and the drafts are never committed or logged. They live in
+  **encrypted** Actions artifacts (90 days; key = secret `REDDIT_ARTIFACT_KEY`, because artifacts of a public repo are downloadable by
+  any GitHub user). The ledger holds only `status`, a 16-character hash of the question (for dedupe), the batch date and, later,
+  the post id / url. A draft can be approved for 90 days; after that its artifact is gone and the question must be re-drafted.
+  Note: a workflow_dispatch input is shown on the public run page.
+
 ## Drafts stay approvable indefinitely
 
 - A draft is keyed by numeric article id. A newer cron/manual run never overwrites, expires or rejects the

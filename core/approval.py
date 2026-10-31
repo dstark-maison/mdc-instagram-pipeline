@@ -11,7 +11,7 @@ import os
 import re
 from urllib.parse import quote, urlencode
 
-from core import http
+from core import config, http
 
 # The ONLY accepted shape of an approval title. fullmatch(), never match():
 # `$` would accept a trailing newline.
@@ -112,3 +112,64 @@ def send_failure_email(context, error_text):
         f"<h2>Social pipeline failure</h2><p><strong>{e(context)}</strong></p>"
         f"<pre style='white-space:pre-wrap'>{e(http.redact(error_text))}</pre>",
     )
+
+
+# --- Reddit emails ------------------------------------------------------------
+
+def _source_line(d):
+    sig = d.get("signals") or {}
+    if d["source"] == "gsc":
+        return (f"Search Console (last 7 days): {sig.get('impressions')} impressions, {sig.get('clicks')} clicks, "
+                f"CTR {sig.get('ctr', 0):.1%}, average position {sig.get('position', 0):.1f}")
+    if d["source"] == "findquestions":
+        return "findquestions list pasted by you"
+    return "FAQ block of the matching blog article"
+
+
+def send_reddit_draft_email(d):
+    """One review email per Reddit draft (Approve / Reject). d is the draft dict (see reddit_draft.py)."""
+    e = html.escape
+    flags = "".join(f"<li>{e(f)}</li>" for f in d["flags"])
+    flag_block = (f'<div style="background:#fff3cd;border:1px solid #e0c36a;padding:10px 14px;margin:12px 0">'
+                  f'<strong>Check before approving</strong><ul style="margin:6px 0 0">{flags}</ul></div>') if flags else (
+        '<p style="color:#2e6b3a">No flags: every number and claim traces to the article.</p>')
+    link = d.get("link")
+    btns = (_button("Approve", approval_link("approve", d["id"], "reddit"), "#2e6b3a")
+            + _button("Reject", approval_link("reject", d["id"], "reddit"), "#8a2f2f"))
+    body = f"""
+    <h2>Reddit draft: {e(d['question'])}</h2>
+    <p style="color:#666;font-family:sans-serif">Language: <strong>{e(d['lang'].upper())}</strong> &middot;
+       Source: {e(_source_line(d))}<br>
+       Matching article: {e(d.get('article_title') or 'none')} {('&middot; ' + e(link)) if link else ''}</p>
+    {flag_block}
+    <h3>Post title</h3>
+    <p style="font-size:16px"><strong>{e(d['title'])}</strong></p>
+    <h3>Post body</h3>
+    <div style="white-space:pre-wrap;border:1px solid #ddd;padding:12px 16px;background:#faf9f7">{e(d['body'])}</div>
+    <hr><p>{btns}</p>
+    <p style="color:#666;font-size:12px">Approve sends you a copy-ready email with a suggested posting day. Nothing is posted
+    for you: Reddit's API is closed, so you post it by hand to r/{e(config.REDDIT_SUBREDDIT)} and send the URL back.</p>
+    """
+    _send(f"Reddit draft (EN/DE: {d['lang'].upper()}): {d['question'][:80]}", body)
+
+
+def send_reddit_ready_email(d, post_on, weekday):
+    """After Approve: title + body ready to copy, the suggested day, how to report the URL."""
+    e = html.escape
+    repo = os.environ["GITHUB_REPOSITORY"]
+    body = f"""
+    <h2>Ready to post: r/{e(config.REDDIT_SUBREDDIT)}</h2>
+    <p style="font-family:sans-serif"><strong>Suggested posting day: {e(weekday)} {e(post_on)}</strong>
+       (one Reddit post per day). Language: {e(d['lang'].upper())}.</p>
+    <h3>Title (copy)</h3>
+    <div style="white-space:pre-wrap;border:1px solid #ddd;padding:10px 14px;background:#faf9f7;font-size:16px">{e(d['title'])}</div>
+    <h3>Body (copy)</h3>
+    <div style="white-space:pre-wrap;border:1px solid #ddd;padding:12px 16px;background:#faf9f7">{e(d['body'])}</div>
+    <hr>
+    <p style="font-family:sans-serif"><strong>After you posted it</strong>, send the URL back:
+    <a href="https://github.com/{e(repo)}/actions/workflows/social-publish.yml">Actions &rarr; Social Publish &rarr; Run workflow</a>
+    with <code>article</code> = <code>{e(d['id'])}</code>, <code>channel</code> = <code>reddit</code>,
+    <code>url</code> = the post URL (https://www.reddit.com/r/{e(config.REDDIT_SUBREDDIT)}/comments/...).
+    The ledger then marks it published.</p>
+    """
+    _send(f"Ready to post ({weekday} {post_on}): {d['title'][:80]}", body)

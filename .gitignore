@@ -21,3 +21,7 @@ venv/
 Thumbs.db
 
 reddit/inbox/
+
+# Reddit data is private: never commit it (encrypted artifacts only, see core/reddit_store.py)
+reddit-out/
+reddit/
