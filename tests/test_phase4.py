@@ -239,8 +239,10 @@ class RedditCopy(unittest.TestCase):
 
     def test_prompt_states_the_rules(self):
         s = reddit_copy._system("en")
-        for needle in ("ONLY facts", "no sales tone", "Do NOT write any URL", "[[LINK]]", "English", "unsupported"):
+        for needle in ("ONLY the facts given below", "no sales tone", "Do NOT write any URL", "[[LINK]]", "English", "unsupported",
+                       "NEVER mention or allude to where the facts come from", "LEAVE THAT PART OUT", "it depends"):
             self.assertIn(needle, s)
+        self.assertNotIn("SOURCE", s)                                    # the word is not even used with the model
         self.assertIn("German", reddit_copy._system("de"))
         seen = {}
         with mock.patch.object(copy, "_call_claude", side_effect=lambda s, u, m, max_tokens=0: seen.update(u=u) or claude_json()):
@@ -338,6 +340,12 @@ class WeeklyBase(tp.InTmp):
 
 
 class WeeklyRun(WeeklyBase):
+    def close_open_drafts(self, status="published"):
+        data = ledger.load()
+        for chs in data.values():
+            chs["reddit"]["status"] = status
+        ledger.save(data)
+
     def test_monday_run_sends_five_draft_emails(self):
         sent, log = self.run_week(date(2026, 11, 2), PASTED)
         drafts = [(s, b) for s, b in sent if s.startswith("Reddit draft")]
@@ -392,6 +400,7 @@ class WeeklyRun(WeeklyBase):
         pasted = PASTED
         self.run_week(date(2026, 11, 2), pasted)
         first = {d["question"] for d in reddit_store.decrypt(Path("reddit-out/batch.enc").read_bytes())["drafts"]}
+        self.close_open_drafts()                                                     # all 5 posted: slots are free again
         sent, _ = self.run_week(date(2026, 11, 9), pasted)                           # same inputs a week later
         second = {d["question"] for d in reddit_store.decrypt(Path("reddit-out/batch.enc").read_bytes())["drafts"]}
         self.assertTrue(second)
@@ -405,6 +414,7 @@ class WeeklyRun(WeeklyBase):
         self.run_week(date(2026, 11, 2), pasted)
         pool = reddit_store.decrypt(Path("reddit-out/pool.enc").read_bytes())
         self.assertGreaterEqual(len(pool["questions"]), 1)
+        self.close_open_drafts()
         sent, _ = self.run_week(date(2026, 11, 9), "")                               # nothing pasted this week: pool is used
         self.assertTrue(any("findquestions list pasted by you" in html.unescape(b) for _, b in sent))
 
@@ -537,6 +547,227 @@ class ManualPublishing(WeeklyBase):
             publish.parse_title("approve:flannel-vs-flannelette:reddit")
 
 
+class TopUp(WeeklyBase):
+    """The weekly run tops up to 5 UNPOSTED drafts (pending + approved-not-posted)."""
+
+    def set_status(self, statuses):
+        data = ledger.load()
+        for key, st in zip(sorted(data), statuses):
+            data[key]["reddit"]["status"] = st
+        ledger.save(data)
+
+    def count_new(self, before):
+        return len([k for k in ledger.load() if k not in before])
+
+    def test_open_count_is_pending_plus_approved_only(self):
+        data = {f"2026110{n}": {"reddit": {"status": st}} for n, st in
+                enumerate(["draft", "draft", "approved", "published", "rejected"], 1)}
+        data["900000000001"] = {"ig": {"status": "draft"}}                          # other channels never count
+        self.assertEqual(reddit_draft.open_drafts(data), (["20261101", "20261102"], ["20261103"]))
+
+    def test_five_open_means_the_run_is_skipped_with_a_short_email(self):
+        self.run_week(date(2026, 11, 2))
+        before = ledger.load()
+        self.set_status(["draft", "draft", "draft", "approved", "approved"])        # 3 pending + 2 approved-not-posted
+        n_mails = len(self.sent)
+        calls = []
+        with mock.patch.object(gsc, "pull", side_effect=lambda *a: calls.append("gsc")), \
+                mock.patch.object(copy, "_call_claude", side_effect=lambda *a, **k: calls.append("claude")):
+            sent, log = self.run_week(date(2026, 11, 9))
+        self.assertEqual(calls, [])                                                  # nothing expensive ran
+        self.assertEqual(len(sent), 1)
+        subject, body = sent[0]
+        self.assertEqual(subject, "Reddit weekly run skipped: 5 of 5 drafts still open")
+        text = html.unescape(body)
+        self.assertIn("3 pending approval", text)
+        self.assertIn("2 approved but not posted yet", text)
+        self.assertLess(len(text), 1600)                                              # short
+        self.assertEqual(sorted(ledger.load()), sorted(before))                       # no new drafts
+        self.assertIn("Skipped", log)
+
+    def test_rejected_and_published_free_slots_and_the_run_tops_up_exactly_the_gap(self):
+        self.run_week(date(2026, 11, 2))
+        first = set(ledger.load())
+        self.set_status(["published", "rejected", "draft", "approved", "draft"])     # 3 open -> 2 free
+        sent, _ = self.run_week(date(2026, 11, 9))
+        drafts = [s for s, _ in sent if s.startswith("Reddit draft")]
+        self.assertEqual(len(drafts), 2)
+        self.assertEqual(self.count_new(first), 2)
+        self.assertEqual(len(reddit_draft.open_drafts(ledger.load())[0]) + len(reddit_draft.open_drafts(ledger.load())[1]), 5)
+
+    def test_one_free_slot_gives_one_draft_and_nothing_open_gives_up_to_five(self):
+        self.run_week(date(2026, 11, 2))
+        first = set(ledger.load())
+        self.set_status(["published", "draft", "draft", "draft", "draft"])
+        sent, _ = self.run_week(date(2026, 11, 9))
+        self.assertEqual(self.count_new(first), 1)
+        self.set_status(["published"] * 6)                                              # nothing open: full capacity...
+        before = set(ledger.load())
+        sent, _ = self.run_week(date(2026, 11, 16))
+        made = len([s for s, _ in sent if s.startswith("Reddit draft")])
+        self.assertEqual(made, self.count_new(before))
+        self.assertTrue(1 <= made <= 5)                                                  # ...but never more than the questions left (used ones are skipped)
+
+    def test_manual_runs_follow_the_same_rule(self):
+        self.run_week(date(2026, 11, 2))
+        n = len(ledger.load())
+        sent, _ = self.run_week(date(2026, 11, 2), "Which throw blanket material is best for winter?")   # same day, manual
+        self.assertEqual(len(ledger.load()), n)                                       # still 5 open: skipped
+        self.assertTrue(sent[0][0].startswith("Reddit weekly run skipped"))
+
+    def test_skip_email_never_contains_draft_text(self):
+        self.run_week(date(2026, 11, 2))
+        sent, _ = self.run_week(date(2026, 11, 9))
+        body = html.unescape(sent[0][1])
+        for d in reddit_store.decrypt(Path("reddit-out/batch.enc").read_bytes())["drafts"]:
+            self.assertNotIn(d["question"], body)
+            self.assertNotIn(d["title"], body)
+
+
+class Redraft(WeeklyBase):
+    def setUp(self):
+        super().setUp()
+        self.run_week(date(2026, 11, 2))
+        self.batch_before = reddit_store.decrypt(Path("reddit-out/batch.enc").read_bytes())
+        self.uploaded_before = (self.uploaded / "reddit-batch-20261102.enc").read_bytes()
+        self.ids = sorted(ledger.load())
+
+    def run_redraft(self, draft_id, claude=None):
+        before = len(self.sent)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"REDRAFT_ID": draft_id}), contextlib.redirect_stdout(out), \
+                mock.patch.object(gsc, "pull", side_effect=AssertionError("a re-draft must not pull Search Console")):
+            if claude:
+                with mock.patch.object(copy, "_call_claude", side_effect=claude):
+                    code = self._main()
+            else:
+                code = self._main()
+        if Path("reddit-out/batch.enc").exists():
+            shutil.copy("reddit-out/batch.enc", self.uploaded / "reddit-batch-20261102.enc")
+        return code, self.sent[before:], out.getvalue()
+
+    def _main(self):
+        try:
+            reddit_draft.main(date(2026, 11, 9))
+            return 0
+        except SystemExit as e:
+            return e.code
+
+    @staticmethod
+    def clean_claude(s, u, m, max_tokens=0):
+        body = ("Flannel and Biber are both brushed cotton, so the difference is mostly the name.\n\n"
+                "A typical flannel duvet cover weighs about 180 g/m2 and a 135 x 200 cm duvet is the usual choice for one person. " * 3
+                + "\n\n[[LINK]]")
+        return json.dumps({"title": "Neuer Titel?", "body": body, "unsupported": []})
+
+    def test_only_the_chosen_draft_is_replaced_and_its_new_email_is_sent(self):
+        target = self.ids[0]
+        old = next(d for d in self.batch_before["drafts"] if d["id"] == target)
+        code, sent, log = self.run_redraft(target, self.clean_claude)
+        self.assertEqual(code, 0)
+        after = reddit_store.decrypt(Path("reddit-out/batch.enc").read_bytes())
+        self.assertEqual([d["id"] for d in after["drafts"]], [d["id"] for d in self.batch_before["drafts"]])
+        for before_d, after_d in zip(self.batch_before["drafts"], after["drafts"]):
+            if before_d["id"] == target:
+                self.assertNotEqual(after_d["body"], before_d["body"])
+                self.assertEqual(after_d["title"], "Neuer Titel?")
+                for key in ("question", "lang", "source", "signals", "article_id", "link"):
+                    self.assertEqual(after_d[key], old[key])                          # same question, article and link
+                self.assertIn("redrafted", after_d)
+            else:
+                self.assertEqual(after_d, before_d)                                   # #2-#5 byte-identical
+        self.assertEqual(len(sent), 1)                                                # exactly one new email
+        subject, body = sent[0]
+        self.assertTrue(subject.startswith("Reddit RE-DRAFT"))
+        text = html.unescape(body)
+        self.assertIn("Re-draft</strong> with the updated prompt", text)
+        self.assertIn("Neuer Titel?", text)
+        self.assertIn(f"title=approve%3A{target}%3Areddit", body)                    # the same approval link
+        self.assertIn(f"title=reject%3A{target}%3Areddit", body)
+
+    def test_ledger_is_untouched_by_a_redraft_and_nothing_private_is_logged(self):
+        before = ledger.load()
+        code, sent, log = self.run_redraft(self.ids[0], self.clean_claude)
+        self.assertEqual(ledger.load(), before)
+        for needle in ("Neuer Titel", "Flannel and Biber", self.batch_before["drafts"][0]["question"]):
+            self.assertNotIn(needle.lower(), log.lower())
+
+    def test_only_pending_drafts_can_be_redrafted(self):
+        data = ledger.load()
+        data[self.ids[1]]["reddit"]["status"] = "approved"
+        data[self.ids[2]]["reddit"]["status"] = "published"
+        ledger.save(data)
+        for bad in (self.ids[1], self.ids[2], "202611029"):
+            code, sent, _ = self.run_redraft(bad, self.clean_claude)
+            self.assertEqual(code, 1, bad)
+            self.assertTrue(sent[-1][0].startswith("[FAILED] Reddit re-draft failed"), bad)
+        self.assertEqual((self.uploaded / "reddit-batch-20261102.enc").read_bytes(), self.uploaded_before)  # artifact untouched
+
+    def test_a_held_or_unpublished_article_blocks_the_redraft(self):
+        victim = next(d for d in self.batch_before["drafts"] if d["id"] == self.ids[0])
+        held_index = [dict(a, published=False) if a["id"] == victim["article_id"] else a for a in INDEX]
+        with mock.patch.object(ra, "fetch_index", return_value=held_index):
+            code, sent, _ = self.run_redraft(self.ids[0], self.clean_claude)
+        self.assertEqual(code, 1)
+
+    def test_the_old_approval_link_publishes_the_new_version(self):
+        target = self.ids[0]
+        self.run_redraft(target, self.clean_claude)
+        base_env = {**tp.MainFlow.env, "RESULT_FILE": "result.md", "GITHUB_TOKEN": "x", "REDDIT_URL": "", "TITLE": f"approve:{target}:reddit"}
+        with mock.patch.dict(os.environ, base_env):
+            publish.main()
+        subject, body = self.sent[-1]
+        self.assertTrue(subject.startswith("Ready to post"))
+        self.assertIn("Neuer Titel?", html.unescape(body))
+
+
+class NoSourceTalk(unittest.TestCase):
+    CLEAN = {"title": "Is flannel warm?", "body": "Flannel is brushed cotton and holds warm air near the skin. " * 8 + "\n\n[[LINK]]", "unsupported": []}
+    DIRTY = {**CLEAN, "body": CLEAN["body"] + "\nZur Optik kann ich hier nichts sagen, das steht nicht in den Quellen, auf die ich mich stütze."}
+    LINK = "https://www.maisondecocon.com/en/blogs/blog/x?utm_source=reddit&utm_medium=social&utm_campaign=x"
+
+    def test_detector_catches_source_talk_in_both_languages_and_allows_plain_it_depends(self):
+        for text in ("my sources say so", "According to our article, flannel is warm.", "I can't say anything about that.",
+                     "That isn't covered in the article.", "Laut dem Artikel hilft das.", "Das steht nicht in den Quellen.",
+                     "Dazu kann ich hier nichts sagen.", "the information I have is limited", "auf die ich mich stütze"):
+            self.assertTrue(reddit_copy.meta_hits(text), text)
+        for text in ("That depends on the fabric weight.", "Das ist hier nicht abgedeckt.", "That isn't covered here.",
+                     "Es kommt auf das Gewicht an.", "More detail on our blog: https://x", "Disclosure: I work for Maison de Cocon, a German bedding brand."):
+            self.assertEqual(reddit_copy.meta_hits(text), [], text)
+
+    def test_a_dirty_draft_is_retried_once_with_the_offending_phrases_named(self):
+        prompts = []
+        replies = [json.dumps(self.DIRTY), json.dumps(self.CLEAN)]
+        with mock.patch.object(copy, "_call_claude", side_effect=lambda s, u, m, max_tokens=0: prompts.append(u) or replies.pop(0)):
+            d = reddit_copy.generate("Is flannel warm?", "en", "FACTS", self.LINK, "m")
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("WITHOUT any such wording", prompts[1])
+        self.assertIn("quellen", prompts[1])
+        self.assertEqual(reddit_copy.meta_hits(d["body"]), [])
+        self.assertFalse(any("sources" in f for f in d["flags"]))
+
+    def test_a_clean_draft_is_not_retried(self):
+        with mock.patch.object(copy, "_call_claude", return_value=json.dumps(self.CLEAN)) as call:
+            reddit_copy.generate("Is flannel warm?", "en", "FACTS", self.LINK, "m")
+        self.assertEqual(call.call_count, 1)
+
+    def test_if_the_retry_is_still_dirty_it_is_flagged_for_the_owner(self):
+        with mock.patch.object(copy, "_call_claude", return_value=json.dumps(self.DIRTY)) as call:
+            d = reddit_copy.generate("Is flannel warm?", "en", "FACTS", self.LINK, "m")
+        self.assertEqual(call.call_count, 2)                                           # one retry, no loop
+        self.assertTrue(any("talks about its sources" in f for f in d["flags"]))
+
+    def test_the_prompt_never_uses_the_word_source_with_the_model(self):
+        self.assertNotIn("SOURCE", reddit_copy.build_prompt("q", "text"))
+        self.assertIn("FACTS", reddit_copy.build_prompt("q", "text"))
+
+    def test_the_link_lead_and_disclosure_added_by_code_are_not_source_talk(self):
+        d = reddit_copy.finalize(self.CLEAN, "en", self.LINK)
+        self.assertEqual(reddit_copy.meta_hits(d["body"]), [])
+        d = reddit_copy.finalize(self.CLEAN, "de", self.LINK)
+        self.assertEqual(reddit_copy.meta_hits(d["body"]), [])
+
+
 class Workflows(unittest.TestCase):
     def load(self, name):
         return yaml.safe_load((Path(__file__).resolve().parent.parent / ".github" / "workflows" / name).read_text(encoding="utf-8"))
@@ -552,6 +783,8 @@ class Workflows(unittest.TestCase):
         self.assertTrue(all(u["with"]["retention-days"] == 90 for u in uploads))
         run = next(s for s in steps if s.get("id") == "draft")
         self.assertEqual(run["env"]["QUESTIONS"], "${{ inputs.questions }}")        # via env, never in a shell line
+        self.assertEqual(run["env"]["REDRAFT_ID"], "${{ inputs.redraft }}")
+        self.assertIn("redraft", on["workflow_dispatch"]["inputs"])
         self.assertNotIn("inputs.", run["run"])
         self.assertEqual(wf["permissions"]["actions"], "read")
 
