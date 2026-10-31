@@ -1,4 +1,4 @@
-# mdc-instagram-pipeline (MDC social pipeline)
+# mdc-social-pipeline (formerly mdc-instagram-pipeline)
 
 ## Session start: repo sync check
 

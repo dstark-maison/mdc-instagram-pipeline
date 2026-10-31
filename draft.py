@@ -21,32 +21,27 @@ Nothing is created on any platform at draft time.
 import os
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
-from core import approval, blog, config, copy, image, ledger
+from core import approval, blog, config, copy, image, ledger, meta
 from channels import instagram
 
 REQUIRED_ENV = [
     "SHOPIFY_STORE_DOMAIN", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET",
-    "SHOPIFY_BLOG_HANDLE", "ANTHROPIC_API_KEY",
+    "SHOPIFY_BLOG_HANDLE", "ANTHROPIC_API_KEY", "ACCESS_TOKEN",
     "RESEND_API_KEY", "RESEND_FROM", "RESEND_TO",
     "GITHUB_REPOSITORY", "GITHUB_REF_NAME",
 ]
 
 
-def parse_ts(value):
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
 def select_new_articles(articles, ledger_data, cutoff=None, hold=None):
-    cutoff = parse_ts(cutoff or config.DRAFT_CUTOFF)
+    cutoff = blog.parse_ts(cutoff or config.DRAFT_CUTOFF)
     hold = config.HOLD_ARTICLE_IDS if hold is None else hold
     picked = []
     for a in articles:
         aid = ledger.numeric_id(a["id"])
         if (a["isPublished"] and a.get("publishedAt")
-                and parse_ts(a["publishedAt"]) > cutoff
+                and blog.parse_ts(a["publishedAt"]) > cutoff
                 and aid not in hold
                 and instagram.CODE not in ledger_data.get(aid, {})):
             picked.append(a)
@@ -79,23 +74,15 @@ def draft_instagram(article, model):
     image.crop_to_square(article["image"]["url"], Path(image_repo_path))
     # Pushed before the email so the preview URL is live.
     ledger.commit_and_push([image_repo_path], f"Add IG image for {article_id} ({handle}) [skip ci]")
-    image_url = config.public_raw_url(image_repo_path)
-
-    return instagram.build_draft(article, article_url, content, image_repo_path, image_url)
+    return instagram.build_draft(article, article_url, content, image_repo_path)
 
 
 def process(article, model):
+    """Draft one article. Order matters: persist FIRST, email SECOND, so an email
+    can never point at content that was not saved. Re-drafting the same article
+    replaces its draft (same approval link); other articles' drafts are untouched."""
     article_id = ledger.numeric_id(article["id"])
     draft = draft_instagram(article, model)
-    approval.send_draft_email(
-        {**article, "article_id": article_id},
-        previews=[{
-            "label": "Instagram", "image_url": draft["image_url"],
-            "text": draft["full_caption"], "target": draft["target"],
-            "link": draft["article_url"],
-        }],
-        buttons=[("Approve", "approve", "ig"), ("Reject", "reject", "ig")],
-    )
 
     def mutate(data):
         ledger.set_entry(
@@ -104,8 +91,25 @@ def process(article, model):
             post_id=None, url=None, container_id=None, timestamp=ledger.now(),
         )
 
-    path = ledger.write_draft(article_id, instagram.CODE, draft)
-    ledger.update(mutate, f"Draft {article_id} ({article['handle']}, ig) [skip ci]", [path])
+    path = ledger.draft_path(article_id, instagram.CODE)
+    data = ledger.update(mutate, f"Draft {article_id} ({article['handle']}, ig) [skip ci]",
+                         {path: ledger.draft_text(draft)})
+
+    pending = [
+        (aid, "+".join(channels), d.get("title"), d.get("handle"))
+        for aid, channels, d in ledger.pending_drafts(data, exclude_article_id=article_id)
+        if "+".join(channels) in ("ig",)  # only combinations the approval title accepts
+    ]
+    approval.send_draft_email(
+        {**article, "article_id": article_id},
+        previews=[{
+            "label": "Instagram", "image_url": config.public_raw_url(draft["image_path"]),
+            "text": draft["full_caption"], "target": draft["target"],
+            "link": draft["article_url"],
+        }],
+        buttons=[("Approve", "approve", "ig"), ("Reject", "reject", "ig")],
+        pending=pending,
+    )
 
 
 def main():
@@ -114,6 +118,7 @@ def main():
     target = os.environ.get("ARTICLE_ID", "").strip()
 
     try:
+        meta.preflight()  # invalid token / missing scope -> stop, failure email names it
         if target:
             if not re.fullmatch(r"[0-9]+", target):
                 raise ValueError(f"article_id must be the NUMERIC Shopify id, got {target!r}")

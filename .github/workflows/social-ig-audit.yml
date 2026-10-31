@@ -20,7 +20,7 @@ jobs:
       - run: pip install requests Pillow
       - name: Audit
         env:
-          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          ACCESS_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}

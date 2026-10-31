@@ -112,14 +112,20 @@ def commit_and_push(paths, message):
     _git("push")
 
 
-def update(mutator, message, extra_paths=(), attempts=4):
-    """Apply mutator(ledger) and persist the ledger (plus extra_paths).
+def draft_text(draft):
+    return json.dumps(draft, indent=2, ensure_ascii=False) + "\n"
 
-    Concurrent runs (a draft cron and an approval, or two approvals) edit the
-    same JSON file, so a plain rebase can conflict. On a rejected push we drop
-    our local commit, re-sync to origin and re-apply the mutation — in CI
-    only, where the checkout is disposable.
+
+def update(mutator, message, files=None, attempts=4):
+    """Apply mutator(ledger) and persist the ledger plus `files` ({Path: text}).
+
+    Everything is written AFTER syncing with origin, never before: a tracked
+    file rewritten before `git pull --rebase` (a re-draft) would make the
+    rebase refuse to run. Concurrent runs edit the same JSON, so on a rejected
+    push we drop our local commit, re-sync and re-apply (CI only, where the
+    checkout is disposable).
     """
+    files = files or {}
     branch = os.environ["GITHUB_REF_NAME"]
     in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     git_identity()
@@ -129,7 +135,10 @@ def update(mutator, message, extra_paths=(), attempts=4):
         ledger = load()
         mutator(ledger)
         save(ledger)
-        _git("add", str(LEDGER_PATH), *[str(p) for p in extra_paths])
+        for path, text in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        _git("add", str(LEDGER_PATH), *[str(p) for p in files])
         if subprocess.run(["git", "diff", "--staged", "--quiet"]).returncode == 0:
             return ledger
         _git("commit", "-m", message)
@@ -143,3 +152,28 @@ def update(mutator, message, extra_paths=(), attempts=4):
         _git("fetch", "origin", branch)
         _git("reset", "--hard", f"origin/{branch}")
     raise RuntimeError(f"Could not push ledger update after {attempts} attempts (git exit {last})")
+
+
+def pending_drafts(ledger_data, exclude_article_id=None):
+    """[(article_id, [channels], draft)] for every article with a draft-status
+    entry, except exclude_article_id. Oldest first."""
+    out = []
+    for key, channels in ledger_data.items():
+        if key.startswith("_") or key == exclude_article_id:
+            continue
+        pending = [c for c, e in channels.items() if e.get("status") == DRAFT]
+        if not pending:
+            continue
+        try:
+            draft = read_draft(key, pending[0])
+        except FileNotFoundError:
+            draft = {}
+        out.append((key, pending, draft))
+    return sorted(out, key=lambda t: min((channels_ts(ledger_data[t[0]], c) for c in t[1]), default=""))
+
+
+def channels_ts(channels, channel):
+    return channels.get(channel, {}).get("timestamp") or ""
+
+
+BIO_KEY = "_bio_link"  # reserved ledger key: where /pages/latest-post currently points

@@ -1,6 +1,7 @@
 """Blog source: Shopify articles."""
 
 import os
+from datetime import datetime
 
 from core import shopify_client
 
@@ -40,6 +41,10 @@ def fetch_recent_articles(blog_handle, limit=10):
     if not blogs:
         raise RuntimeError(f"Blog handle '{blog_handle}' not found or no access")
     return blogs[0]["articles"]["nodes"]
+
+
+def parse_ts(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def build_article_url(blog_handle, article_handle, utm=None):
