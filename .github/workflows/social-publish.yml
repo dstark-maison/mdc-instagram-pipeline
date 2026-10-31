@@ -55,7 +55,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests cryptography
 
       - name: Approve / reject
         id: run
@@ -72,6 +72,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
           RESEND_TO: ${{ secrets.RESEND_TO }}
+          PINTEREST_APP_ID: ${{ secrets.PINTEREST_APP_ID }}
+          PINTEREST_APP_SECRET: ${{ secrets.PINTEREST_APP_SECRET }}
+          PINTEREST_REFRESH_TOKEN: ${{ secrets.PINTEREST_REFRESH_TOKEN }}
+          PINTEREST_STATE_KEY: ${{ secrets.PINTEREST_STATE_KEY }}
         run: python publish.py
 
       - name: Comment result and close the issue

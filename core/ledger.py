@@ -9,6 +9,7 @@ Statuses:
               retries: re-running could double-post. Needs a manual check.
   published   posted AND read back by id
   rejected    rejected in the approval step
+  scheduled   (Pinterest backfill only) approved; the daily job publishes it on `publish_on`
 """
 
 import json
@@ -21,8 +22,9 @@ LEDGER_PATH = Path("state/ledger.json")
 DRAFTS_DIR = Path("state/drafts")
 
 DRAFT, PUBLISHING, PUBLISHED, REJECTED = "draft", "publishing", "published", "rejected"
-PLATFORM_NAMES = {"ig": "the Instagram feed", "fb": "the Facebook Page"}
-CHANNEL_ORDER = ("ig", "fb")
+SCHEDULED = "scheduled"  # Pinterest backfill: approved, published later by the daily job (<= PIN_DAILY_CAP a day)
+PLATFORM_NAMES = {"ig": "the Instagram feed", "fb": "the Facebook Page", "pin": "Pinterest"}
+CHANNEL_ORDER = ("ig", "fb")  # channels listed in the "Pending approvals" section (Pinterest has its own email)
 
 
 def numeric_id(gid):
