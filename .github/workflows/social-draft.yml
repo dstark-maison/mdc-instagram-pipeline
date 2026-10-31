@@ -7,7 +7,12 @@ name: Social Draft
 on:
   schedule:
     - cron: "0 7,15 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      article_id:
+        description: "Optional: draft exactly this article (NUMERIC Shopify id). Empty = normal run (only articles published after DRAFT_CUTOFF)."
+        required: false
+        type: string
 
 permissions:
   contents: write  # commit drafts, images, ledger
@@ -40,4 +45,5 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
           RESEND_TO: ${{ secrets.RESEND_TO }}
+          ARTICLE_ID: ${{ inputs.article_id }}
         run: python draft.py

@@ -30,7 +30,17 @@ without its read-back.
 | `published` | posted and read back; re-running is a no-op |
 | `rejected` | rejected at the approval step |
 
-`state/legacy-ig-drafted-articles.json` lists articles handled by the old pipeline; they are skipped.
+## Which articles get drafted
+
+- **Cron** (`social-draft.yml`): only articles *published after* `DRAFT_CUTOFF` (`core/config.py`, set to the
+  merge time) with no ledger entry. Older articles are never drafted automatically.
+- **On request**: *Actions → Social Draft → Run workflow* with `article_id` (numeric). Works for any age, but
+  refuses held articles and anything already `published` / `publishing`.
+- **Hold list** (`HOLD_ARTICLE_IDS` in `core/config.py`): articles blocked for both paths until their claims are
+  fixed. Remove the entry to release one.
+- `state/legacy-ig-drafted-articles.json` is read-only history of the old pipeline; nothing reads it.
+- Legacy posts that were live on Instagram were seeded into the ledger as `published` (`seeded_from` says how)
+  by `tools/ig_media_audit.py`, a read-only image-hash match of the account's media against `generated/`.
 
 ## Approval security
 

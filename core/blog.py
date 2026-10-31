@@ -48,3 +48,15 @@ def build_article_url(blog_handle, article_handle, utm=None):
     if utm:
         url += "?" + "&".join(f"{k}={v}" for k, v in utm.items())
     return url
+
+
+def fetch_article(article_id):
+    """One article by NUMERIC id (used for explicit, on-request drafts)."""
+    data = shopify_client.graphql(
+        """query($id: ID!) { article(id: $id) {
+             id title handle publishedAt isPublished summary body image { url } } }""",
+        {"id": f"gid://shopify/Article/{article_id}"},
+    )
+    if not data["article"]:
+        raise RuntimeError(f"No article with id {article_id}")
+    return data["article"]

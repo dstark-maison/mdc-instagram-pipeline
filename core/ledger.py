@@ -19,7 +19,6 @@ from pathlib import Path
 
 LEDGER_PATH = Path("state/ledger.json")
 DRAFTS_DIR = Path("state/drafts")
-LEGACY_PATH = Path("state/legacy-ig-drafted-articles.json")
 
 DRAFT, PUBLISHING, PUBLISHED, REJECTED = "draft", "publishing", "published", "rejected"
 
@@ -47,17 +46,11 @@ def get(ledger, article_id, channel):
     return ledger.get(article_id, {}).get(channel)
 
 
-def set_entry(ledger, article_id, channel, **fields):
-    entry = ledger.setdefault(article_id, {}).setdefault(channel, {})
+def set_entry(ledger, key, channel, **fields):
+    """key = numeric article id. (Not named article_id: entries carry an `article_id` field.)"""
+    entry = ledger.setdefault(key, {}).setdefault(channel, {})
     entry.update(fields)
     return entry
-
-
-def legacy_drafted_ids():
-    """Article ids drafted by the pre-ledger Instagram pipeline."""
-    if LEGACY_PATH.exists():
-        return {numeric_id(i) for i in json.loads(LEGACY_PATH.read_text()).get("drafted_article_ids", [])}
-    return set()
 
 
 def draft_path(article_id, channel):

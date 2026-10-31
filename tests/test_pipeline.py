@@ -78,23 +78,66 @@ class Redaction(unittest.TestCase):
 
 
 class DraftSelection(InTmp):
-    def art(self, i, handle, pub=True):
-        return {"id": f"gid://shopify/Article/{i}", "handle": handle, "isPublished": pub}
+    CUT = "2026-10-31T12:00:00+00:00"
 
-    def test_skips_legacy_ledger_and_unpublished(self):
-        arts = [self.art("1", "a"), self.art("2", "b"), self.art("3", "c"), self.art("4", "d", pub=False)]
-        picked = draft.select_new_articles(arts, {"2": {"ig": {}}}, {"1"})
-        self.assertEqual([a["handle"] for a in picked], ["c"])
+    def art(self, i, pub_at, pub=True):
+        return {"id": f"gid://shopify/Article/{i}", "handle": f"h{i}", "isPublished": pub, "publishedAt": pub_at}
+
+    def pick(self, arts, ledger_data=None, hold=None):
+        return [ledger.numeric_id(a["id"]) for a in
+                draft.select_new_articles(arts, ledger_data or {}, self.CUT, hold or {})]
+
+    def test_only_articles_published_after_the_cutoff(self):
+        arts = [self.art("1", "2026-10-31T11:59:59Z"), self.art("2", "2026-10-31T12:00:00Z"),
+                self.art("3", "2026-10-31T12:00:01Z"), self.art("4", "2026-11-02T08:00:00+00:00"),
+                self.art("5", "2026-11-02T08:00:00Z", pub=False)]
+        self.assertEqual(self.pick(arts), ["3", "4"])
+
+    def test_skips_ledger_entries_and_held_articles(self):
+        arts = [self.art(str(i), "2026-11-01T00:00:00Z") for i in (6, 7, 8)]
+        self.assertEqual(self.pick(arts, {"6": {"ig": {}}}, {"7": "held"}), ["8"])
 
     def test_renamed_handle_does_not_cause_a_redraft(self):
-        arts = [self.art("2", "brand-new-handle")]
-        self.assertEqual(draft.select_new_articles(arts, {"2": {"ig": {}}}, set()), [])
+        a = self.art("9", "2026-11-01T00:00:00Z")
+        a["handle"] = "brand-new-handle"
+        self.assertEqual(self.pick([a], {"9": {"ig": {}}}), [])
 
-    def test_legacy_file_gids_are_compared_numerically(self):
-        Path("state").mkdir()
-        Path("state/legacy-ig-drafted-articles.json").write_text(
-            json.dumps({"drafted_article_ids": ["gid://shopify/Article/7", "gid://shopify/Article/8"]}))
-        self.assertEqual(ledger.legacy_drafted_ids(), {"7", "8"})
+    def test_default_cutoff_and_hold_come_from_config(self):
+        self.assertIn("751689728333", draft.config.HOLD_ARTICLE_IDS)
+        self.assertEqual(draft.select_new_articles([self.art("1", "2020-01-01T00:00:00Z")], {}), [])
+
+    def test_explicit_request_ignores_age_but_not_hold_or_published(self):
+        old = {"isPublished": True}
+        draft.check_explicit("5", old, {}, hold={})  # old article is fine on request
+        with self.assertRaises(RuntimeError):
+            draft.check_explicit("5", old, {}, hold={"5": "claims"})
+        with self.assertRaises(RuntimeError):
+            draft.check_explicit("5", {"isPublished": False}, {}, hold={})
+        for status in ("published", "publishing"):
+            with self.assertRaises(RuntimeError):
+                draft.check_explicit("5", old, {"5": {"ig": {"status": status}}}, hold={})
+        draft.check_explicit("5", old, {"5": {"ig": {"status": "draft"}}}, hold={})  # re-draft ok
+
+    def test_non_numeric_article_id_is_refused(self):
+        env = {"ARTICLE_ID": "upholstered-headboard-guide", **{k: "x" * 10 for k in draft.REQUIRED_ENV}}
+        with mock.patch.dict(os.environ, env), mock.patch.object(approval, "_send") as send:
+            with self.assertRaises(SystemExit):
+                draft.main()
+        send.assert_called_once()
+
+
+class DraftProcess(InTmp):
+    def test_process_sends_email_writes_draft_and_ledger_entry(self):
+        article = {"id": f"gid://shopify/Article/{ID}", "handle": "some-post", "title": "T"}
+        fake_draft = {"image_url": "https://i", "full_caption": "cap", "target": "IG",
+                      "article_url": "https://u", "article_id": ID, "handle": "some-post"}
+        with mock.patch.object(draft, "draft_instagram", return_value=fake_draft),                 mock.patch.object(approval, "_send") as send:
+            draft.process(article, "m")
+        entry = ledger.load()[ID]["ig"]
+        self.assertEqual((entry["status"], entry["article_id"], entry["handle"]), ("draft", ID, "some-post"))
+        self.assertEqual(ledger.read_draft(ID, "ig")["full_caption"], "cap")
+        send.assert_called_once()
+        self.assertIn(f"title=approve%3A{ID}%3Aig", send.call_args[0][1])
 
 
 class Approve(InTmp):

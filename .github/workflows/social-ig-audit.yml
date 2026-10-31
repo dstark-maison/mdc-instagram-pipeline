@@ -1,17 +1,9 @@
 # READ-ONLY. Lists the IG account's published media and matches it against the
 # legacy drafts (see tools/ig_media_audit.py). Posts nothing, commits nothing.
-# Runs on this PR because a new workflow_dispatch workflow cannot be started
-# before it exists on the default branch; same-repo PRs get secrets.
 
 name: Social IG Audit
 
 on:
-  pull_request:
-    paths:
-      - tools/ig_media_audit.py
-      - tools/legacy_map.json
-      - tools/backlog26_ids.json
-      - .github/workflows/social-ig-audit.yml
   workflow_dispatch: {}
 
 permissions:
@@ -20,8 +12,6 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    # never run for forks (no secrets, and never with them)
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
