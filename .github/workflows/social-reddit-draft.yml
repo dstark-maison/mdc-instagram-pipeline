@@ -1,0 +1,73 @@
+# Weekly Reddit drafts for r/MaisonDeCocon (Monday cron + manual run).
+# PRIVACY: this repo is public. Search Console data, the pasted findquestions list and the drafts are
+# never committed and never printed; they live in ENCRYPTED artifacts (90 days, key = secret
+# REDDIT_ARTIFACT_KEY). The ledger gets only status + a short question hash.
+# Publishing is manual (Reddit's API is closed): approve -> copy-ready email -> post by hand -> submit
+# the URL through "Social Publish" (article = draft id, channel = reddit, url = the post).
+
+name: Social Reddit Draft
+
+on:
+  schedule:
+    - cron: "47 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      questions:
+        description: "Optional: this week's findquestions.com list. One question per line, or separate with | or ?"
+        required: false
+        type: string
+
+permissions:
+  contents: write  # ledger commits (status + hash only)
+  actions: read    # read last week's encrypted pool / earlier batch artifacts
+
+concurrency:
+  group: social-reddit-draft
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests google-auth cryptography
+
+      - name: Draft
+        id: draft
+        env:
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          SHOPIFY_BLOG_HANDLE: ${{ secrets.SHOPIFY_BLOG_HANDLE }}
+          STOREFRONT_DOMAIN: ${{ secrets.STOREFRONT_DOMAIN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
+          RESEND_TO: ${{ secrets.RESEND_TO }}
+          REDDIT_ARTIFACT_KEY: ${{ secrets.REDDIT_ARTIFACT_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          QUESTIONS: ${{ inputs.questions }}
+        run: python reddit_draft.py
+
+      # Uploaded even if the job failed half-way: the emails may already be out. Files are encrypted.
+      - name: Upload encrypted batch
+        if: always() && steps.draft.outputs.batch != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-batch-${{ steps.draft.outputs.batch }}
+          path: reddit-out/batch.enc
+          retention-days: 90
+
+      - name: Upload encrypted pool (unused pasted questions)
+        if: always() && hashFiles('reddit-out/pool.enc') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-pool
+          path: reddit-out/pool.enc
+          retention-days: 90

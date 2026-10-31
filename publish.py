@@ -15,10 +15,12 @@ the approval issue. Any failure also sends a failure email with the raw error.
 """
 
 import os
+import re
 import sys
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from core import approval, config, http, ledger, meta
+from core import approval, config, http, ledger, meta, reddit_store
 from core.approval import ACTION_RE
 from channels import facebook, instagram
 
@@ -43,7 +45,7 @@ def do_reject(article_id, channel):
     entry = ledger.get(data, article_id, channel)
     if not entry:
         return f"- `{channel}`: no draft found, nothing to reject."
-    if entry["status"] != ledger.DRAFT:
+    if entry["status"] not in (ledger.DRAFT, ledger.APPROVED):
         return f"- `{channel}`: status is `{entry['status']}`, left unchanged."
 
     def mutate(d):
@@ -65,8 +67,93 @@ def label(article_id):
     return article_id
 
 
+# --- Reddit: manual publishing (no Reddit API) -------------------------------------
+# approve -> copy-ready email; the owner posts by hand and submits the URL -> published.
+# The approval issue comment and the ledger never contain the draft text.
+REDDIT_URL_RE = re.compile(
+    r"https://(?:www\.|old\.|new\.)?reddit\.com/r/" + config.REDDIT_SUBREDDIT + r"/comments/([a-z0-9]{5,10})(?:/[^\s?#]*)?", re.I)
+
+
+def reddit_post_id(url):
+    """Post id from a r/MaisonDeCocon post URL (query string / fragment ignored), or None."""
+    m = REDDIT_URL_RE.fullmatch((url or "").strip().split("?")[0].split("#")[0])
+    return m.group(1).lower() if m else None
+
+
+def suggest_day(data, today=None):
+    """First day from tomorrow on that has no other approved/published Reddit post (one post per day)."""
+    today = today or datetime.now(timezone.utc).date()
+    taken = set()
+    for chs in data.values():
+        e = chs.get("reddit") if isinstance(chs, dict) else None
+        if e and e.get("status") == ledger.APPROVED and e.get("post_on"):
+            taken.add(e["post_on"])
+        if e and e.get("status") == ledger.PUBLISHED and e.get("published_on"):
+            taken.add(e["published_on"])
+    day = today + timedelta(days=1)
+    while day.isoformat() in taken:
+        day += timedelta(days=1)
+    return day
+
+
+def do_reddit(question_id):
+    """Approve, or (with REDDIT_URL set) record the posted URL. Returns (markdown line, ok)."""
+    data = ledger.load()
+    entry = ledger.get(data, question_id, "reddit")
+    if not entry:
+        raise Blocked(f"No Reddit draft with id {question_id} in the ledger.")
+    url = os.environ.get("REDDIT_URL", "").strip()
+
+    if url:
+        post_id = reddit_post_id(url)
+        if not post_id:
+            raise Blocked(f"The URL must be a post in r/{config.REDDIT_SUBREDDIT} "
+                          f"(https://www.reddit.com/r/{config.REDDIT_SUBREDDIT}/comments/<id>/...); got {url!r}")
+        canonical = f"https://www.reddit.com/r/{config.REDDIT_SUBREDDIT}/comments/{post_id}/"
+        if entry["status"] == ledger.PUBLISHED:
+            return f"- `reddit`: already published, nothing done → {entry['url']}", True
+        if entry["status"] != ledger.APPROVED:
+            raise Blocked(f"Draft {question_id} is `{entry['status']}`: approve it first, then submit the URL.")
+
+        def published(d):
+            ledger.set_entry(d, question_id, "reddit", status=ledger.PUBLISHED, post_id=post_id, url=canonical,
+                             timestamp=ledger.now(), published_on=ledger.now()[:10])
+        ledger.update(published, f"Reddit {question_id} posted [skip ci]")
+        return (f"- `reddit`: marked published → {canonical} "
+                f"(recorded from the URL you gave; Reddit cannot be read back, its API is closed)"), True
+
+    if entry["status"] == ledger.PUBLISHED:
+        return f"- `reddit`: already published, nothing done → {entry['url']}", True
+    if entry["status"] == ledger.APPROVED:
+        return f"- `reddit`: already approved (suggested day {entry.get('post_on')}); nothing done", True
+    if entry["status"] == ledger.REJECTED:
+        raise Blocked("This draft was rejected; it will not be posted.")
+    try:
+        batch = reddit_store.load_batch(reddit_store.batch_id_of(question_id))
+    except reddit_store.StoreError as exc:
+        raise Blocked(str(exc))
+    if batch is None:
+        raise Blocked("The draft's encrypted artifact is gone (90-day retention) or was never uploaded: it cannot be "
+                      "approved any more. Re-run the weekly Reddit job to draft new questions.")
+    draft = next((d for d in batch["drafts"] if d["id"] == question_id), None)
+    if not draft:
+        raise Blocked(f"Draft {question_id} is not in the artifact of batch {reddit_store.batch_id_of(question_id)}.")
+    post_on = suggest_day(data)
+
+    def approved(d):
+        ledger.set_entry(d, question_id, "reddit", status=ledger.APPROVED, post_on=post_on.isoformat(),
+                         timestamp=ledger.now())
+    ledger.update(approved, f"Reddit {question_id} approved [skip ci]")
+    weekday = post_on.strftime("%A")
+    approval.send_reddit_ready_email(draft, post_on.isoformat(), weekday)
+    return (f"- `reddit`: approved. A copy-ready email with title and body is on its way; "
+            f"suggested posting day {weekday} {post_on.isoformat()}"), True
+
+
 def do_approve(article_id, channel):
     """Returns (markdown line, ok). Raises on anything that blocks or breaks publishing."""
+    if channel == "reddit":
+        return do_reddit(article_id)
     module = CHANNELS.get(channel)
     if not module:
         raise Blocked(f"Channel `{channel}` is not implemented in this phase.")
@@ -148,6 +235,9 @@ def main():
         write_result(f"**Reject `{name}`**\n\n" + "\n".join(lines))
         return
 
+    if "reddit" in channels:
+        # approving needs the encrypted draft; recording a posted URL needs nothing but the ledger
+        config.require_env([] if os.environ.get("REDDIT_URL") else ["REDDIT_ARTIFACT_KEY", "GITHUB_TOKEN"])
     known = [ch for ch in channels if ch in CHANNELS]
     if known:
         config.require_env(sorted({v for ch in known for v in ENV_BY_CHANNEL[ch]}))

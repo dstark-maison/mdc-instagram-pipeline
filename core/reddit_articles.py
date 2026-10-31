@@ -77,7 +77,8 @@ _ACCORDION_RE = re.compile(r"<summary>.*?<span>(.*?)</span>.*?</summary>.*?<div 
 
 def strip_html(html):
     html = re.sub(r"<!--.*?-->|<script.*?</script>|<style.*?</style>", " ", html or "", flags=re.S | re.I)
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+    html = re.sub(r"</?(?:p|div|br|h[1-6]|li|ul|ol|tr|td|th|table|thead|tbody|section|summary|details|blockquote)[^>]*>", " ", html, flags=re.I)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html)).strip()  # inline tags (b, em, a) vanish without a gap
 
 
 def faq_pairs(body):

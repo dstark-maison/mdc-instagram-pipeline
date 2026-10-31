@@ -25,6 +25,10 @@ on:
         type: choice
         options: [ig, fb, ig+fb, pin, reddit]
         default: ig
+      url:
+        description: "Reddit only: the URL of the post you made by hand (https://www.reddit.com/r/MaisonDeCocon/comments/...). article = the Reddit draft id from the email."
+        required: false
+        type: string
       test_bad_token:
         description: "Test: run with an invalid Meta token to prove the failure email"
         required: false
@@ -34,6 +38,7 @@ on:
 permissions:
   contents: write  # ledger commits
   issues: write    # comment + close the approval issue
+  actions: read    # Reddit: download the (encrypted) draft artifact
 
 concurrency:
   group: social-publish-${{ github.event.issue.title || format('{0}:{1}', inputs.article, inputs.channel) }}
@@ -55,7 +60,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests cryptography
 
       - name: Approve / reject
         id: run
@@ -72,6 +77,9 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
           RESEND_TO: ${{ secrets.RESEND_TO }}
+          REDDIT_URL: ${{ inputs.url }}
+          REDDIT_ARTIFACT_KEY: ${{ secrets.REDDIT_ARTIFACT_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python publish.py
 
       - name: Comment result and close the issue

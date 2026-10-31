@@ -17,6 +17,14 @@ def public_raw_url(repo_path):
     return f"https://raw.githubusercontent.com/{repo}/{branch}/{repo_path}"
 
 
+# --- Reddit (r/MaisonDeCocon) ---------------------------------------------------
+REDDIT_SUBREDDIT = "MaisonDeCocon"
+REDDIT_DRAFTS_PER_WEEK = 5
+REDDIT_MIN_IMPRESSIONS = 3      # Search Console question queries below this are noise (tiny site)
+REDDIT_MAX_FROM_GSC = 3         # slots: GSC first, then the pasted findquestions list, then blog FAQ blocks
+REDDIT_MAX_FROM_PASTED = 2
+REDDIT_POOL_MAX = 60            # unused pasted questions carried over to later weeks
+
 # --- draft selection ---------------------------------------------------------
 # The scheduled draft job only drafts articles PUBLISHED AFTER this instant
 # (UTC, set to the PR merge time). Anything older is drafted only on request:

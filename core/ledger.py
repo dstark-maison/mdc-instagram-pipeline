@@ -9,6 +9,7 @@ Statuses:
               retries: re-running could double-post. Needs a manual check.
   published   posted AND read back by id
   rejected    rejected in the approval step
+  approved    (Reddit only) approved; the owner posts it by hand and submits the URL -> published
 """
 
 import json
@@ -21,7 +22,8 @@ LEDGER_PATH = Path("state/ledger.json")
 DRAFTS_DIR = Path("state/drafts")
 
 DRAFT, PUBLISHING, PUBLISHED, REJECTED = "draft", "publishing", "published", "rejected"
-PLATFORM_NAMES = {"ig": "the Instagram feed", "fb": "the Facebook Page"}
+APPROVED = "approved"  # Reddit only: approved, waiting for the owner to post it manually and send the URL back
+PLATFORM_NAMES = {"ig": "the Instagram feed", "fb": "the Facebook Page", "reddit": "r/MaisonDeCocon"}
 CHANNEL_ORDER = ("ig", "fb")
 
 
