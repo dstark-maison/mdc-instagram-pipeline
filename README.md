@@ -35,9 +35,10 @@ without its read-back.
 - A draft is keyed by numeric article id. A newer cron/manual run never overwrites, expires or rejects the
   draft of a *different* article, and the Instagram container is created only at publish time (no 24 h expiry).
 - Re-drafting the *same* article replaces its draft content; the existing approval link (same id) publishes the latest version.
-- `/pages/latest-post` only moves forward: it is updated only if the approved article was published after the one it
-  currently points to (pointer kept in the ledger under `_bio_link`). Approving an older draft after a newer post is live
-  leaves the bio link alone.
+- `/pages/latest-post` always points to the article of the **most recent successful IG publish** (by publish time):
+  every successful publish repoints it, including an older article approved later. The pointer is kept in the ledger
+  under `_bio_link`; it is only refused to a run whose publish time is older than the current holder's (two simultaneous
+  approvals), never by article date.
 - Every draft email ends with **Pending approvals**: all other drafts still in `draft` status, each with its Approve link.
 - Image URLs are never stored; they are built from the current repo name when an email is sent or a post is published.
 

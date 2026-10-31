@@ -5,10 +5,10 @@ expire after 24 h, which broke approvals that arrived the next day.
 """
 
 import os
-import re
 import time
+from datetime import datetime, timezone
 
-from core import blog, http, ledger, shopify_client
+from core import http, ledger, shopify_client
 
 CODE = "ig"
 GRAPH_BASE = "https://graph.facebook.com/v25.0"
@@ -153,42 +153,50 @@ def update_bio_redirect(target_url):
     return check
 
 
-def _published_at_of_target(target_url):
-    """publishedAt of the article a bio redirect currently points to, or None."""
-    m = re.search(r"/blogs/[^/]+/([^/?#]+)", target_url or "")
-    if not m:
-        return None
-    data = shopify_client.graphql(
-        "query($q: String!) { articles(first: 1, query: $q) { nodes { publishedAt } } }",
-        {"q": f"handle:{m.group(1)}"},
-    )
-    nodes = data["articles"]["nodes"]
-    return nodes[0]["publishedAt"] if nodes else None
+def _publish_time(result):
+    """When the post went live (Instagram's own timestamp; 'now' if it is missing)."""
+    ts = result.get("timestamp") or ""
+    for parse in (lambda v: datetime.fromisoformat(v.replace("Z", "+00:00")),
+                  lambda v: datetime.strptime(v, "%Y-%m-%dT%H:%M:%S%z")):  # Graph API sends +0000
+        try:
+            return parse(ts)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
 
 
 def after_publish(draft, result):
-    """Move the bio redirect FORWARD only: update it iff this article was published
-    after the one it currently points to. Approving an older draft after a newer
-    post went out leaves the bio link alone."""
-    article = blog.fetch_article(draft["article_id"])
-    new_ts = blog.parse_ts(article["publishedAt"])
+    """Every successful publish repoints the bio redirect at its own article, so
+    /pages/latest-post always follows the most recent successful IG publish.
 
-    bio = ledger.load().get(ledger.BIO_KEY)
-    if bio:
-        current_ts, current_desc = bio["published_at"], f"article {bio['article_id']}"
-    else:  # first run on this ledger: ask Shopify where the redirect points now
-        existing = _find_redirect(os.environ["BIO_LINK_PATH"])
-        current_ts = _published_at_of_target(existing["target"]) if existing else None
-        current_desc = existing["target"] if existing else None
-    if current_ts and new_ts <= blog.parse_ts(current_ts):
-        return (f"Bio redirect `{os.environ['BIO_LINK_PATH']}` left unchanged: it points to a newer "
-                f"article ({current_desc}, published {current_ts}).")
-
-    redirect = update_bio_redirect(draft["article_url"])
+    The ledger pointer (_bio_link) is claimed first, and only a publish that is
+    not OLDER than the current holder may take it. That ordering guard is by
+    publish time, never by article date: it only matters if two approvals run
+    at the same moment, so a slower run cannot overwrite a more recent publish.
+    """
+    published_time = _publish_time(result)
+    outcome = {}
 
     def mutate(data):
-        data[ledger.BIO_KEY] = {"article_id": draft["article_id"], "published_at": article["publishedAt"],
-                                "url": draft["article_url"], "updated": ledger.now()}
+        current = data.get(ledger.BIO_KEY)
+        if current and datetime.fromisoformat(current["published_time"]) > published_time:
+            outcome["lost_to"] = current
+            return
+        outcome.pop("lost_to", None)
+        data[ledger.BIO_KEY] = {"article_id": draft["article_id"], "url": draft["article_url"],
+                                "published_time": published_time.isoformat(), "updated": ledger.now()}
 
-    ledger.update(mutate, f"Bio link -> {draft['article_id']} [skip ci]")
+    data = ledger.update(mutate, f"Bio link -> {draft['article_id']} [skip ci]")
+    if "lost_to" in outcome:
+        cur = outcome["lost_to"]
+        return (f"Bio redirect `{os.environ['BIO_LINK_PATH']}` left unchanged: a more recent publish "
+                f"(article {cur['article_id']}, {cur['published_time']}) already owns it.")
+
+    target = data[ledger.BIO_KEY]["url"]  # read after the claim: the winner's URL
+    try:
+        redirect = update_bio_redirect(target)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not set redirect {os.environ['BIO_LINK_PATH']} -> {target}: {http.redact(exc)}. "
+            f"The ledger pointer already says {target}; set the redirect by hand.") from None
     return f"Bio redirect `{redirect['path']}` → {redirect['target']}"

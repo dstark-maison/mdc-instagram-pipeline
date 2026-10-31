@@ -1,4 +1,4 @@
-"""Pending drafts stay approvable, forward-only bio link, Meta token preflight, repo-rename safety."""
+"""Pending drafts stay approvable, bio link follows the latest publish, Meta token preflight, repo-rename safety."""
 
 import html
 import json
@@ -104,61 +104,77 @@ class DraftFlow(tp.InTmp):
         self.assertEqual(ledger.load()[A]["ig"]["status"], "draft")
 
 
-class BioLinkForwardOnly(tp.InTmp):
+class BioLinkLatestPublish(tp.InTmp):
+    """/pages/latest-post follows the most recent successful IG publish (by publish time)."""
     env = {"BIO_LINK_PATH": "/pages/latest-post", "ACCESS_TOKEN": "t" * 12, "IG_USER_ID": "1"}
 
-    def approve(self, article_id, bio=None, existing_target=None, target_ts=None):
-        data = {article_id: {"ig": {"status": "draft", "handle": ARTICLES[article_id]["handle"]}}}
-        if bio:
-            data[ledger.BIO_KEY] = bio
+    def approve(self, article_id, published="2026-11-01T10:00:00+0000", redirect_error=None):
+        data = ledger.load()
+        data[article_id] = {"ig": {"status": "draft", "handle": ARTICLES[article_id]["handle"]}}
         ledger.save(data)
         ledger.write_draft(article_id, "ig", make_draft(article_id, "cap"))
         redirects = []
-        live = {"target": existing_target} if existing_target else None
+
+        def set_redirect(url):
+            if redirect_error:
+                raise RuntimeError(redirect_error)
+            redirects.append(url)
+            return {"path": "/pages/latest-post", "target": url}
+
         with mock.patch.dict(os.environ, self.env), \
                 mock.patch.object(instagram, "publish",
-                                  return_value={"post_id": "9", "url": "https://ig/p/9", "timestamp": "t"}), \
-                mock.patch.object(instagram.blog, "fetch_article", return_value=ARTICLES[article_id]), \
-                mock.patch.object(instagram, "_find_redirect", return_value=live), \
-                mock.patch.object(instagram, "_published_at_of_target", return_value=target_ts), \
-                mock.patch.object(instagram, "update_bio_redirect",
-                                  side_effect=lambda url: redirects.append(url) or {"path": "/pages/latest-post", "target": url}):
+                                  return_value={"post_id": "9", "url": "https://ig/p/9", "timestamp": published}), \
+                mock.patch.object(instagram, "update_bio_redirect", side_effect=set_redirect), \
+                mock.patch.object(approval, "_send") as send:
             line, ok = publish.do_approve(article_id, "ig")
-        return line, ok, redirects
+        return line, ok, redirects, send
 
-    def test_older_draft_approved_after_newer_published_goes_live_but_bio_unchanged(self):
-        newer_bio = {"article_id": B, "published_at": B_TS, "url": "https://shop/blogs/blog/newer"}
-        line, ok, redirects = self.approve(A, bio=newer_bio)
+    def test_every_successful_publish_updates_the_bio_link_even_an_older_article(self):
+        _, ok, redirects, _ = self.approve(B, published="2026-11-01T10:00:00+0000")
+        self.assertEqual(redirects, ["https://shop/blogs/blog/newer"])
+        # the OLDER article published afterwards still takes the bio link: it is the latest publish
+        line, ok, redirects, _ = self.approve(A, published="2026-11-01T11:00:00+0000")
         self.assertTrue(ok)
-        self.assertEqual(redirects, [])                                   # bio link NOT moved
+        self.assertEqual(redirects, ["https://shop/blogs/blog/older"])
         data = ledger.load()
-        self.assertEqual(data[A]["ig"]["status"], "published")            # post went live
-        self.assertEqual(data[A]["ig"]["url"], "https://ig/p/9")
-        self.assertEqual(data[ledger.BIO_KEY], newer_bio)                 # pointer untouched
-        self.assertIn("left unchanged", line)
+        self.assertEqual(data[ledger.BIO_KEY]["article_id"], A)
+        self.assertEqual(data[A]["ig"]["status"], "published")
+        self.assertEqual(data[B]["ig"]["status"], "published")
 
-    def test_newer_article_moves_the_bio_link_forward(self):
-        older_bio = {"article_id": A, "published_at": A_TS, "url": "https://shop/blogs/blog/older"}
-        line, ok, redirects = self.approve(B, bio=older_bio)
-        self.assertEqual(redirects, ["https://shop/blogs/blog/newer"])
-        self.assertEqual(ledger.load()[ledger.BIO_KEY]["article_id"], B)
-        self.assertEqual(ledger.load()[ledger.BIO_KEY]["published_at"], B_TS)
+    def test_pointer_follows_each_publish_in_turn(self):
+        for aid, ts in ((A, "2026-11-01T10:00:00+0000"), (B, "2026-11-02T10:00:00+0000"), (A, "2026-11-03T10:00:00+0000")):
+            self.approve(aid, published=ts)
+            self.assertEqual(ledger.load()[ledger.BIO_KEY]["article_id"], aid)
 
-    def test_same_article_does_not_move_it_again(self):
-        _, _, redirects = self.approve(B, bio={"article_id": B, "published_at": B_TS, "url": "x"})
+    def test_a_slower_concurrent_run_cannot_overwrite_a_more_recent_publish(self):
+        self.approve(B, published="2026-11-01T12:00:00+0000")
+        line, ok, redirects, _ = self.approve(A, published="2026-11-01T11:59:59+0000")  # published earlier
+        self.assertTrue(ok)
         self.assertEqual(redirects, [])
+        self.assertIn("left unchanged", line)
+        self.assertEqual(ledger.load()[ledger.BIO_KEY]["article_id"], B)
+        self.assertEqual(ledger.load()[A]["ig"]["status"], "published")  # the post itself still went live
 
-    def test_first_run_compares_with_the_live_redirect_target(self):
-        _, _, redirects = self.approve(A, existing_target="https://shop/blogs/blog/newer", target_ts=B_TS)
-        self.assertEqual(redirects, [])                                   # live redirect already newer
-        _, _, redirects = self.approve(B, existing_target="https://shop/blogs/blog/older", target_ts=A_TS)
-        self.assertEqual(redirects, ["https://shop/blogs/blog/newer"])
+    def test_works_with_no_prior_pointer_and_ignores_article_dates(self):
+        # a redirect set by hand / by the old pipeline is simply overwritten by the next publish
+        self.assertNotIn(ledger.BIO_KEY, ledger.load())
+        _, _, redirects, _ = self.approve(A)
+        self.assertEqual(redirects, ["https://shop/blogs/blog/older"])
 
-    def test_first_run_with_unresolvable_or_missing_redirect_creates_it(self):
-        _, _, redirects = self.approve(A, existing_target="https://shop/pages/home", target_ts=None)
-        self.assertEqual(redirects, ["https://shop/blogs/blog/older"])
-        _, _, redirects = self.approve(A, existing_target=None)
-        self.assertEqual(redirects, ["https://shop/blogs/blog/older"])
+    def test_graph_api_timestamp_formats_parse(self):
+        for ts in ("2026-11-01T10:00:00+0000", "2026-11-01T10:00:00+00:00", "2026-11-01T10:00:00Z"):
+            self.assertEqual(instagram._publish_time({"timestamp": ts}).hour, 10)
+        self.assertIsNotNone(instagram._publish_time({}).tzinfo)  # missing -> now, timezone-aware
+
+    def test_redirect_failure_keeps_the_post_published_and_emails_the_fix(self):
+        line, ok, _, send = self.approve(A, redirect_error="Shopify says no")
+        self.assertFalse(ok)
+        self.assertEqual(ledger.load()[A]["ig"]["status"], "published")
+        self.assertIn("post-publish step failed", line)
+        body = html.unescape(send.call_args[0][1])
+        self.assertIn("Shopify says no", body)
+        self.assertIn("set the redirect by hand", body)
+        self.assertIn("https://shop/blogs/blog/older", body)
 
 
 class ImageUrlFromCurrentRepo(tp.InTmp):

@@ -176,4 +176,4 @@ def channels_ts(channels, channel):
     return channels.get(channel, {}).get("timestamp") or ""
 
 
-BIO_KEY = "_bio_link"  # reserved ledger key: where /pages/latest-post currently points
+BIO_KEY = "_bio_link"  # reserved ledger key: {article_id, url, published_time}; the most recent IG publish owns /pages/latest-post
