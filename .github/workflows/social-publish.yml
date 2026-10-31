@@ -1,0 +1,88 @@
+# Publish stage. Two ways in:
+#   1. An "approval" issue opened from an email button (Approve / Reject).
+#      Only OWNER / COLLABORATOR authors are trusted, and only issues that
+#      carry the "approval" label.
+#   2. workflow_dispatch (manual re-run, or the forced-error test).
+#
+# SECURITY: issue text and dispatch inputs reach the script ONLY through the
+# TITLE env var, where publish.py validates them with a strict regex.
+# Nothing user-controlled is interpolated into a `run:` line.
+
+name: Social Publish
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      article:
+        description: "Article handle (a-z, 0-9, -)"
+        required: true
+        type: string
+      channel:
+        description: "Channels"
+        required: true
+        type: choice
+        options: [ig, fb, ig+fb, pin, reddit]
+        default: ig
+      test_bad_token:
+        description: "Test: run with an invalid Meta token to prove the failure email"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write  # ledger commits
+  issues: write    # comment + close the approval issue
+
+concurrency:
+  group: social-publish-${{ github.event.issue.title || format('{0}:{1}', inputs.article, inputs.channel) }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.issue.labels.*.name, 'approval') &&
+       (github.event.issue.author_association == 'OWNER' ||
+        github.event.issue.author_association == 'COLLABORATOR'))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Approve / reject
+        id: run
+        env:
+          TITLE: ${{ github.event.issue.title || format('approve:{0}:{1}', inputs.article, inputs.channel) }}
+          RESULT_FILE: ${{ runner.temp }}/result.md
+          ACCESS_TOKEN: ${{ inputs.test_bad_token && 'invalid-token-for-failure-test' || secrets.META_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          BIO_LINK_PATH: ${{ secrets.BIO_LINK_PATH }}
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          STOREFRONT_DOMAIN: ${{ secrets.STOREFRONT_DOMAIN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
+          RESEND_TO: ${{ secrets.RESEND_TO }}
+        run: python publish.py
+
+      - name: Comment result and close the issue
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESULT_FILE: ${{ runner.temp }}/result.md
+        run: |
+          if [ ! -s "$RESULT_FILE" ]; then
+            echo "❌ The run ended before producing a result. See the workflow log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RESULT_FILE"
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RESULT_FILE"
+          gh issue close "$ISSUE_NUMBER"

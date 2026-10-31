@@ -1,0 +1,43 @@
+# Draft stage: finds newly published blog posts, drafts the Instagram copy,
+# saves it to state/drafts/ and emails an approval request.
+# Never posts anything to any platform.
+
+name: Social Draft
+
+on:
+  schedule:
+    - cron: "0 7,15 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # commit drafts, images, ledger
+
+concurrency:
+  group: social-draft
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests Pillow
+
+      - name: Run draft
+        env:
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          SHOPIFY_BLOG_HANDLE: ${{ secrets.SHOPIFY_BLOG_HANDLE }}
+          STOREFRONT_DOMAIN: ${{ secrets.STOREFRONT_DOMAIN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM_IG }}
+          RESEND_TO: ${{ secrets.RESEND_TO }}
+        run: python draft.py
